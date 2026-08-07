@@ -538,6 +538,22 @@ async function renderApprovals() {
   const content = document.getElementById('content');
   content.innerHTML = `<div class="page-title">승인관리</div><div class="page-sub">강사/수강생 신규 가입 승인 · 비밀번호 초기화 · 퇴사 처리</div>`;
 
+  const importCard = document.createElement('div'); importCard.className = 'card';
+  const regionOptsImp = REGIONS.map(r => `<option value="${r.id}">${esc(r.name)}</option>`).join('');
+  importCard.innerHTML = `
+    <h3>기존 수강생 일괄 등록 (CSV)</h3>
+    <div class="muted mb8">CSV 헤더: 이름,휴대폰번호,레벨,희망요일,경력,입사시기,MBTI,DISC (순서 무관, 헤더로 자동 인식) · 초기 비밀번호는 휴대폰 뒤 4자리로 자동 설정되며, 승인 절차 없이 바로 로그인 가능한 상태로 등록됩니다.</div>
+    <div class="row mb8">
+      <a class="btn small ghost" href="data:text/csv;charset=utf-8,%EC%9D%B4%EB%A6%84,%ED%9C%B4%EB%8C%80%ED%8F%B0%EB%B2%88%ED%98%B8,%EB%A0%88%EB%B2%A8,%ED%9D%AC%EB%A7%9D%EC%9A%94%EC%9D%BC,%EA%B2%BD%EB%A0%A5,%EC%9E%85%EC%82%AC%EC%8B%9C%EA%B8%B0,MBTI,DISC%0A%ED%99%8D%EA%B8%B8%EB%8F%99,01012345678,1Lv(%EB%B2%A0%EC%9D%B4%EC%A7%81),%EC%9B%94%2C%EC%88%98,3-6%EA%B0%9C%EC%9B%94%20%EB%AF%B8%EB%A7%8C,2026%EB%85%84%201%EB%B6%84%EA%B8%B0,INFP,D" download="수강생등록양식.csv">CSV 양식 다운로드</a>
+      <select id="importRegion">${regionOptsImp}</select>
+    </div>
+    <input type="file" id="csvFile" accept=".csv" />
+    <button class="btn primary small mt8" id="csvImportBtn">업로드 및 등록</button>
+    <div id="importResult" class="mt16"></div>
+  `;
+  content.appendChild(importCard);
+  document.getElementById('csvImportBtn').onclick = handleCsvImport;
+
   const pendCard = document.createElement('div'); pendCard.className = 'card';
   pendCard.innerHTML = `<h3>승인 대기 목록</h3><div id="pendList">불러오는 중...</div>`;
   content.appendChild(pendCard);
@@ -555,6 +571,49 @@ async function renderApprovals() {
   document.getElementById('showInactive').onclick = () => loadStudentMgmt('inactive');
   loadStudentMgmt('active');
 }
+const CSV_HEADER_MAP = { '이름': 'name', '휴대폰번호': 'phone', '휴대폰': 'phone', '레벨': 'level', '희망요일': 'desiredDays', '수강희망요일': 'desiredDays', '경력': 'career', '입사시기': 'joinPeriod', 'mbti': 'mbti', 'disc': 'disc' };
+
+function parseCSV(text) {
+  const lines = text.replace(/\r/g, '').split('\n').filter(l => l.trim().length);
+  if (!lines.length) return [];
+  const splitLine = (line) => {
+    const out = []; let cur = ''; let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (c === '"') { inQuotes = !inQuotes; continue; }
+      if (c === ',' && !inQuotes) { out.push(cur); cur = ''; continue; }
+      cur += c;
+    }
+    out.push(cur);
+    return out.map(s => s.trim());
+  };
+  const headers = splitLine(lines[0]).map(h => CSV_HEADER_MAP[h.trim()] || CSV_HEADER_MAP[h.trim().toLowerCase()] || h.trim());
+  return lines.slice(1).map(line => {
+    const cells = splitLine(line);
+    const obj = {};
+    headers.forEach((h, i) => { obj[h] = cells[i] || ''; });
+    return obj;
+  });
+}
+
+function handleCsvImport() {
+  const fileEl = document.getElementById('csvFile');
+  if (!fileEl.files[0]) return alert('CSV 파일을 선택하세요.');
+  const regionId = document.getElementById('importRegion').value;
+  const reader = new FileReader();
+  reader.onload = async () => {
+    const rows = parseCSV(reader.result);
+    if (!rows.length) return alert('읽을 수 있는 데이터가 없습니다.');
+    try {
+      const { results } = await api('/students/bulk-import', { method: 'POST', body: JSON.stringify({ students: rows, regionId }) });
+      document.getElementById('importResult').innerHTML = `<table><thead><tr><th>#</th><th>이름</th><th>아이디(휴대폰)</th><th>결과</th></tr></thead><tbody>
+        ${results.map(r => `<tr><td>${r.row}</td><td>${esc(r.name)}</td><td>${esc(r.phone)}</td><td>${r.ok ? `<span class="badge active">등록완료 (초기비번 ${esc(r.tempPassword)})</span>` : `<span class="badge inactive">${esc(r.error)}</span>`}</td></tr>`).join('')}
+      </tbody></table>`;
+    } catch (e) { alert(e.message); }
+  };
+  reader.readAsText(fileEl.files[0], 'utf-8');
+}
+
 async function approveUser(id) {
   await api(`/users/${id}/approve`, { method: 'POST' });
   renderApprovals();

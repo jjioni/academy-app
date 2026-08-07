@@ -233,6 +233,31 @@ const server = http.createServer(async (req, res) => {
       if (query.level) students = students.filter(s => s.profile && s.profile.level === query.level);
       return sendJSON(res, 200, { students: students.map(safeUser) });
     }
+    if (pathname === '/api/students/bulk-import' && req.method === 'POST') {
+      if (!canApprove(user)) return sendJSON(res, 403, { error: '권한이 없습니다.' });
+      const { students, regionId } = body; // students: [{ name, phone, level, desiredDays, career, joinPeriod, mbti, disc }]
+      if (!Array.isArray(students) || !students.length) return sendJSON(res, 400, { error: '등록할 수강생 목록이 비어있습니다.' });
+      const results = [];
+      students.forEach((s, idx) => {
+        const name = (s.name || '').trim();
+        const phone = (s.phone || '').trim();
+        if (!name || !phone) { results.push({ row: idx + 1, name, phone, ok: false, error: '이름 또는 휴대폰번호 누락' }); return; }
+        if (db.findOne('users', u => u.phone === phone)) { results.push({ row: idx + 1, name, phone, ok: false, error: '이미 존재하는 아이디(휴대폰번호)' }); return; }
+        const tempPassword = phone.replace(/\D/g, '').slice(-4) || '0000';
+        const row = db.insert('users', {
+          role: 'student', phone, passwordHash: hashPassword(tempPassword), name,
+          regionId: regionId || null, status: 'active', createdAt: new Date().toISOString(),
+          createdBy: user.id,
+          profile: {
+            level: s.level || null,
+            desiredDays: (s.desiredDays || '').split(/[,\/\s]+/).filter(Boolean),
+            mbti: s.mbti || '', disc: s.disc || '', career: s.career || '', joinPeriod: s.joinPeriod || '', extra: ''
+          }
+        });
+        results.push({ row: idx + 1, name, phone, ok: true, tempPassword, id: row.id });
+      });
+      return sendJSON(res, 200, { results });
+    }
     if (pathname === '/api/staff' && req.method === 'GET') {
       // instructors + admins list (for assigning leader/instructor)
       const staff = db.find('users', u => ['instructor', 'admin', 'region_rep', 'master'].includes(u.role) && u.status === 'active');
