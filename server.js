@@ -205,6 +205,14 @@ const server = http.createServer(async (req, res) => {
       db.update('users', id, { passwordHash: hashPassword(temp), mustChangePassword: true });
       return sendJSON(res, 200, { tempPassword: temp });
     }
+    if (pathname === '/api/change-phone' && req.method === 'POST') {
+      const { newPhone } = body;
+      if (!newPhone || !newPhone.trim()) return sendJSON(res, 400, { error: '아이디(휴대폰번호)를 입력하세요.' });
+      const clean = newPhone.trim();
+      if (clean !== user.phone && db.findOne('users', u => u.phone === clean)) return sendJSON(res, 400, { error: '이미 사용 중인 아이디입니다.' });
+      db.update('users', user.id, { phone: clean });
+      return sendJSON(res, 200, { ok: true, phone: clean });
+    }
     if (pathname === '/api/change-password' && req.method === 'POST') {
       const { newPassword } = body;
       if (!newPassword || newPassword.length < 4) return sendJSON(res, 400, { error: '비밀번호는 4자 이상이어야 합니다.' });

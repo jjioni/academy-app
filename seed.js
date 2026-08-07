@@ -10,14 +10,22 @@ function run() {
     console.log('region created:', region.name);
   }
 
+  // NOTE: master ID/password below are the requested credentials (happynian).
+  // This block upserts so a redeploy always keeps the master account in sync,
+  // even on Render's free tier where the data file can reset.
+  const MASTER_PHONE = 'happynian';
+  const MASTER_PASSWORD = 'rlatnsejr1!';
   let master = db.findOne('users', u => u.role === 'master');
   if (!master) {
     master = db.insert('users', {
-      role: 'master', phone: '01000000000', passwordHash: hashPassword('master1234'),
+      role: 'master', phone: MASTER_PHONE, passwordHash: hashPassword(MASTER_PASSWORD),
       name: '마스터', regionId: null, status: 'active', createdAt: new Date().toISOString(),
       profile: {}
     });
-    console.log('master account created — phone: 01000000000 / password: master1234');
+    console.log(`master account created — id: ${MASTER_PHONE} / password: ${MASTER_PASSWORD}`);
+  } else if (master.phone !== MASTER_PHONE) {
+    db.update('users', master.id, { phone: MASTER_PHONE, passwordHash: hashPassword(MASTER_PASSWORD) });
+    console.log(`master account synced — id: ${MASTER_PHONE} / password: ${MASTER_PASSWORD}`);
   }
 
   let regionRep = db.findOne('users', u => u.role === 'region_rep' && u.regionId === region.id);

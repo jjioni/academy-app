@@ -3,34 +3,34 @@
     {
       "id": 1,
       "role": "master",
-      "phone": "01000000000",
-      "passwordHash": "84cb5dbf264b70611d2f35e62cc6b3bd:0a8da4a380a438979b877cbd307c4ef5d34d188bc0aa89a3a32cc7c9e7be51f92796e33577fd1d71dba2bf2928a5a07362e4995f0df4deba379a6a61125b9d53",
+      "phone": "happynian",
+      "passwordHash": "5651649ed46f9ed682fcf357d5f72691:9da0bbb9f70bff7cc6ffeafae75c1c3e1d2bbc0de75ae56be020fec95146779c4cd1588676c60cf8c9f67627bc8d69e12c253c50d3b03b061a652f6c6841f480",
       "name": "마스터",
       "regionId": null,
       "status": "active",
-      "createdAt": "2026-08-07T10:04:42.816Z",
+      "createdAt": "2026-08-07T10:52:55.296Z",
       "profile": {}
     },
     {
       "id": 2,
       "role": "region_rep",
       "phone": "01011111111",
-      "passwordHash": "75a5c3d907f5846500b41a0eda9a7915:e45d39dfb5d6766b015396be216bdce2f8fd23eb780c2c1dc92388ffb7a38da6ea5c09651ae6f075c9d0e5765fbb41bb9c8db9f4bb58f6ef7b6e493ce58b55f8",
+      "passwordHash": "fdb4f941775486ce94876ba12b4b6f15:732bedc6632b424883f1f0eff2b1147ec8964d429e4ce970aec9f0c0c597a1bda9e80d7136f6cb46ea3f0f5ddc374991483709cc33bfaadbaeb07fcf47e25601",
       "name": "압구정 지역대표",
       "regionId": 1,
       "status": "active",
-      "createdAt": "2026-08-07T10:04:42.841Z",
+      "createdAt": "2026-08-07T10:52:55.321Z",
       "profile": {}
     },
     {
       "id": 3,
       "role": "admin",
       "phone": "01022222222",
-      "passwordHash": "5a9dfd4820a1cc515ac9d0cca7a10da0:806d8195711ae126f8435e00caa53dbebf0bd3bb407cacdf2da0f72bd8209916b10496ecd3b67b73167c3e6b22cf06655f5369d5278ddad3cff2f1d79a7356cc",
+      "passwordHash": "54f124e85a7031838a1a9d2b7bad5808:fac0ad372601a8338c97e68b0bb84c6b79ce02c944708cef620a6c0fa0aa68a1ca1d36ba23252db592ea5cf9685e6ceb97f799c5635f2425b7ad541ccc78108b",
       "name": "압구정 관리자",
       "regionId": 1,
       "status": "active",
-      "createdAt": "2026-08-07T10:04:42.865Z",
+      "createdAt": "2026-08-07T10:52:55.344Z",
       "profile": {}
     }
   ],
