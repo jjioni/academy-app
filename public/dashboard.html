@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>아카데미 시간표 · 대시보드</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<div class="app-shell">
+  <div class="sidebar">
+    <div class="brand">아카데미</div>
+    <div class="role-badge" id="roleBadge">-</div>
+    <nav id="nav"></nav>
+    <div class="logout"><button class="btn ghost block" id="logoutBtn">로그아웃</button></div>
+  </div>
+  <div class="main" id="main">
+    <div id="notifBanner"></div>
+    <div id="content"></div>
+  </div>
+</div>
+
+<script>
+let ME = null;
+let REGIONS = [];
+const WEEKDAYS = ['일','월','화','수','목','금','토'];
+const STATUSES = ['출석','보강','지각','조퇴','병결','행사','결석'];
+const LEVELS = ['1Lv(베이직)','2Lv(베이직)','3Lv(우먼)','4Lv(맨즈)'];
+
+async function api(path, opts) {
+  const res = await fetch('/api' + path, Object.assign({ headers: { 'Content-Type': 'application/json' } }, opts));
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || '요청 실패');
+  return data;
+}
+
+function esc(s) { return (s === undefined || s === null) ? '' : String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+const ROLE_LABEL = { master: '마스터', region_rep: '지역대표', admin: '관리자', instructor: '강사', student: '수강생' };
+function canApprove() { return ['master','region_rep','admin'].includes(ME.role); }
+function canEditTimetable() { return ['master','region_rep','admin'].includes(ME.role); }
+function canManagePayments() { return ['master','region_rep','admin'].includes(ME.role); }
+function canCreateAssignment() { return ['master','region_rep','admin','instructor'].includes(ME.role); }
+function canCheckAttendance() { return ['master','region_rep','admin','instructor'].includes(ME.role); }
+
+const TABS = [
+  { key: 'timetable', label: '시간표' },
+  { key: 'attendance', label: '출석' },
+  { key: 'stats', label: '출석 통계', show: () => ME.role !== 'student' },
+  { key: 'feedback', label: '피드백' },
+  { key: 'assignments', label: '과제(선물)' },
+  { key: 'payments', label: '결제관리' },
+  { key: 'approvals', label: '승인관리', show: () => canApprove() },
+  { key: 'timetable-admin', label: '시간표 관리', show: () => canEditTimetable() },
+  { key: 'account', label: '내 정보' },
+];
+
+function renderNav(activeKey) {
+  const nav = document.getElementById('nav');
+  nav.innerHTML = TABS.filter(t => !t.show || t.show()).map(t =>
+    `<a href="#${t.key}" class="${t.key===activeKey?'active':''}" data-key="${t.key}">${t.label}</a>`
+  ).join('');
+}
+
+async function boot() {
+  const me = await api('/me');
+  if (!me.user) { location.href = '/index.html'; return; }
+  ME = me.user;
+  document.getElementById('roleBadge').textContent = `${ROLE_LABEL[ME.role]} · ${esc(ME.name)}`;
+  const regionsRes = await api('/regions');
+  REGIONS = regionsRes.regions;
+  document.getElementById('logoutBtn').onclick = async () => { await api('/logout', { method: 'POST' }); location.href = '/index.html'; };
+  window.onhashchange = route;
+  route();
+  loadNotifBanner();
+}
+
+function route() {
+  const key = (location.hash || '#timetable').slice(1);
+  renderNav(key);
+  const map = {
+    timetable: renderTimetable, attendance: renderAttendance, stats: renderStats,
+    feedback: renderFeedback, assignments: renderAssignments, payments: renderPayments,
+    approvals: renderApprovals, 'timetable-admin': renderTimetableAdmin, account: renderAccount
+  };
+  (map[key] || renderTimetable)();
+}
+
+async function loadNotifBanner() {
+  try {
+    const { notifications } = await api('/notifications/assignments');
+    const box = document.getElementById('notifBanner');
+    if (!notifications.length) { box.innerHTML = ''; return; }
+    box.innerHTML = `<div class="notif-banner">📌 마감 임박 과제: ` +
+      notifications.map(n => `<b>${esc(n.title)}</b>(${n.dDay === 0 ? '오늘 마감' : 'D-' + n.dDay})`).join(', ') + `</div>`;
+  } catch (e) {}
+}
+
+// ===================== 시간표 =====================
+let ttState = { year: new Date().getFullYear(), month: new Date().getMonth() + 1, showInternal: false, regionId: REGIONS[0] ? REGIONS[0].id : '' };
+
+async function renderTimetable() {
+  const content = document.getElementById('content');
+  content.innerHTML = `<div class="page-title">아카데미 시간표</div><div class="page-sub">월별 시간표 · 내부일정 토글로 운영진 일정도 함께 확인</div>`;
+  const card = document.createElement('div'); card.className = 'card';
+  const regionOpts = REGIONS.map(r => `<option value="${r.id}" ${String(r.id)===String(ttState.regionId)?'selected':''}>${esc(r.name)}</option>`).join('');
+  card.innerHTML = `
+    <div class="month-nav">
+      <button class="btn small ghost" id="prevM">‹</button>
+      <div class="label" id="monthLabel"></div>
+      <button class="btn small ghost" id="nextM">›</button>
+      <select id="regionSel" style="margin-left:12px">${regionOpts}</select>
+      <label class="check-toggle"><input type="checkbox" id="internalToggle" ${ttState.showInternal?'checked':''}/> 내부일정 보기</label>
+    </div>
+    <div class="month-grid" id="grid"></div>
+  `;
+  content.appendChild(card);
+  document.getElementById('monthLabel').textContent = `${ttState.year}년 ${ttState.month}월`;
+  document.getElementById('prevM').onclick = () => { ttState.month--; if (ttState.month < 1) { ttState.month = 12; ttState.year--; } renderTimetable(); };
+  document.getElementById('nextM').onclick = () => { ttState.month++; if (ttState.month > 12) { ttState.month = 1; ttState.year++; } renderTimetable(); };
+  document.getElementById('regionSel').onchange = (e) => { ttState.regionId = e.target.value; renderTimetable(); };
+  document.getElementById('internalToggle').onchange = (e) => { ttState.showInternal = e.target.checked; renderTimetable(); };
+
+  const { days } = await api(`/timetable/month?year=${ttState.year}&month=${ttState.month}&regionId=${ttState.regionId}&showInternal=${ttState.showInternal}`);
+  const grid = document.getElementById('grid');
+  const dowHtml = WEEKDAYS.map(w => `<div class="dow">${w}</div>`).join('');
+  const firstDow = new Date(ttState.year, ttState.month - 1, 1).getDay();
+  const blanks = Array(firstDow).fill('<div></div>').join('');
+  const todayStr = new Date().toISOString().slice(0,10);
+  const cellsHtml = days.map(d => {
+    const items = d.items.map(it => {
+      const cls = it.isInternal ? 'internal' : '';
+      const label = it.title || it.level || '';
+      return `<div class="day-item ${cls}" title="${esc(label)} ${esc(it.startTime||'')}-${esc(it.endTime||'')} ${esc(it.room||'')}" onclick="openAttendanceFor('${it.instanceKey}','${d.date}')">${esc(label)}<br><span class="muted">${esc(it.startTime||'')} ${esc(it.room||'')}</span></div>`;
+    }).join('');
+    return `<div class="day-cell ${d.date===todayStr?'today':''}"><div class="date-num">${Number(d.date.slice(8,10))}</div>${items}</div>`;
+  }).join('');
+  grid.innerHTML = dowHtml + blanks + cellsHtml;
+}
+
+function openAttendanceFor(instanceKey, date) {
+  location.hash = 'attendance';
+  setTimeout(() => { window._pendingInstanceKey = instanceKey; renderAttendance(); }, 30);
+}
+
+// ===================== 출석 =====================
+async function renderAttendance() {
+  const content = document.getElementById('content');
+  content.innerHTML = `<div class="page-title">출석</div><div class="page-sub">교시별 출석 체크 (${STATUSES.join(' / ')})</div>`;
+
+  if (ME.role === 'student') return renderAttendanceStudent(content);
+
+  if (!canCheckAttendance()) { content.innerHTML += `<div class="card">권한이 없습니다.</div>`; return; }
+
+  const { days } = await api(`/timetable/month?year=${ttState.year}&month=${ttState.month}&regionId=${ttState.regionId||REGIONS[0].id}&showInternal=false`);
+  const allItems = [];
+  days.forEach(d => d.items.forEach(it => allItems.push(Object.assign({}, it, { date: d.date }))));
+  const picked = window._pendingInstanceKey ? allItems.find(i => i.instanceKey === window._pendingInstanceKey) : allItems[0];
+
+  const card = document.createElement('div'); card.className = 'card';
+  const opts = allItems.map(it => `<option value="${it.instanceKey}" ${picked && picked.instanceKey===it.instanceKey?'selected':''}>${it.date} ${esc(it.title||it.level)}</option>`).join('');
+  card.innerHTML = `
+    <h3>출석 체크할 수업 선택</h3>
+    <select id="classSel" style="min-width:280px">${opts}</select>
+    <div id="attBody" class="mt16"></div>
+  `;
+  content.appendChild(card);
+  document.getElementById('classSel').onchange = () => loadAttBody(allItems);
+  if (picked) loadAttBody(allItems);
+  else document.getElementById('attBody').innerHTML = '<div class="muted">이 지역/월에 등록된 수업이 없습니다.</div>';
+}
+
+async function loadAttBody(allItems) {
+  const key = document.getElementById('classSel').value;
+  const item = allItems.find(i => i.instanceKey === key);
+  const [{ attendance }, { students }] = await Promise.all([
+    api(`/attendance?instanceKey=${encodeURIComponent(key)}`),
+    api(`/students?status=active${item.level ? '&level=' + encodeURIComponent(item.level) : ''}`)
+  ]);
+  const periods = [1, 2, 3];
+  const body = document.getElementById('attBody');
+  body.innerHTML = `
+    <div class="row mb8">
+      <button class="btn small" onclick="genCheckinCode('${key}')">체크인 코드 발급 (1분 유효)</button>
+      <span id="codeDisplay"></span>
+    </div>
+    <table>
+      <thead><tr><th>수강생</th>${periods.map(p => `<th>${p}교시</th>`).join('')}<th>수업 후 피드백</th></tr></thead>
+      <tbody>
+        ${students.map(s => `
+          <tr>
+            <td>${esc(s.name)}</td>
+            ${periods.map(p => {
+              const rec = attendance.find(a => a.studentId === s.id && a.period === p);
+              return `<td><div class="status-btns" data-student="${s.id}" data-period="${p}">${STATUSES.map(st => `<button class="${rec && rec.status===st?'sel':''}" onclick="setAttendance('${key}',${p},${s.id},'${st}')">${st}</button>`).join('')}</div></td>`;
+            }).join('')}
+            <td><button class="btn small ghost" onclick="openFeedbackModal(${s.id}, '${key}')">피드백 작성</button></td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+    <div id="feedbackModal"></div>
+  `;
+}
+
+async function setAttendance(instanceKey, period, studentId, status) {
+  await api('/attendance/check', { method: 'POST', body: JSON.stringify({ instanceKey, period, studentId, status }) });
+  loadAttBody(window._allItemsCache || []);
+  route();
+}
+
+async function genCheckinCode(instanceKey) {
+  const regionId = ttState.regionId || REGIONS[0].id;
+  const { code, ttlMs } = await api('/attendance/checkin-code/generate', { method: 'POST', body: JSON.stringify({ instanceKey, period: 1, regionId }) });
+  const el = document.getElementById('codeDisplay');
+  let remain = Math.floor(ttlMs / 1000);
+  el.innerHTML = `<span class="qr-code-num" style="font-size:22px">${code}</span> <span class="muted">(${remain}초)</span>`;
+  const timer = setInterval(() => {
+    remain--;
+    if (remain <= 0) { clearInterval(timer); el.innerHTML = '<span class="muted">코드 만료됨</span>'; return; }
+    el.querySelector('.muted').textContent = `(${remain}초)`;
+  }, 1000);
+}
+
+function openFeedbackModal(studentId, instanceKey) {
+  const modal = document.getElementById('feedbackModal');
+  modal.innerHTML = `
+    <div class="card mt16">
+      <h3>수업 후 개인 피드백</h3>
+      <div class="field"><textarea id="fbComment" placeholder="이 수강생에 대한 피드백을 남겨주세요."></textarea></div>
+      <button class="btn primary small" onclick="submitInstructorFeedback(${studentId}, '${instanceKey}')">저장</button>
+    </div>
+  `;
+}
+async function submitInstructorFeedback(studentId, instanceKey) {
+  const comment = document.getElementById('fbComment').value.trim();
+  if (!comment) return alert('내용을 입력하세요.');
+  await api('/feedback/instructor', { method: 'POST', body: JSON.stringify({ studentId, instanceKey, comment }) });
+  alert('피드백이 저장되었습니다.');
+  document.getElementById('feedbackModal').innerHTML = '';
+}
+
+async function renderAttendanceStudent(content) {
+  const card = document.createElement('div'); card.className = 'card';
+  card.innerHTML = `
+    <h3>체크인 코드로 출석하기</h3>
+    <div class="field"><label>강사/관리자가 알려준 6자리 코드</label><input id="codeInput" maxlength="6" placeholder="123456" /></div>
+    <button class="btn primary" id="submitCodeBtn">위치 확인 후 출석 제출</button>
+    <div id="checkinMsg" class="mt8"></div>
+  `;
+  content.appendChild(card);
+  document.getElementById('submitCodeBtn').onclick = submitCheckinCode;
+
+  const statsCard = document.createElement('div'); statsCard.className = 'card';
+  statsCard.innerHTML = `<h3>내 출결 현황</h3><div id="myStats">불러오는 중...</div>`;
+  content.appendChild(statsCard);
+  const { stats } = await api(`/attendance/stats?studentId=${ME.id}`);
+  const s = stats[0];
+  document.getElementById('myStats').innerHTML = s ? renderStatsTable([s]) : '기록이 없습니다.';
+}
+
+function submitCheckinCode() {
+  const code = document.getElementById('codeInput').value.trim();
+  const msg = document.getElementById('checkinMsg');
+  if (!code) return;
+  if (!navigator.geolocation) { msg.innerHTML = '<div class="msg error">이 브라우저는 위치 확인을 지원하지 않습니다.</div>'; return; }
+  msg.innerHTML = '<div class="muted">위치 확인 중...</div>';
+  navigator.geolocation.getCurrentPosition(async (pos) => {
+    try {
+      await api('/attendance/checkin-code/submit', { method: 'POST', body: JSON.stringify({ code, lat: pos.coords.latitude, lng: pos.coords.longitude }) });
+      msg.innerHTML = '<div class="msg ok">출석 처리되었습니다.</div>';
+    } catch (e) { msg.innerHTML = `<div class="msg error">${esc(e.message)}</div>`; }
+  }, () => { msg.innerHTML = '<div class="msg error">위치 권한을 허용해야 출석 인증이 가능합니다.</div>'; });
+}
+
+// ===================== 출석 통계 =====================
+function renderStatsTable(stats) {
+  return `<table><thead><tr><th>수강생</th><th>총 수업</th>${STATUSES.map(s=>`<th>${s}</th>`).join('')}</tr></thead><tbody>
+    ${stats.map(s => `<tr><td>${esc(s.student.name)}</td><td>${s.total}</td>${STATUSES.map(st => `<td>${s.percents[st]}% (${s.counts[st]})</td>`).join('')}</tr>`).join('')}
+  </tbody></table>`;
+}
+async function renderStats() {
+  const content = document.getElementById('content');
+  content.innerHTML = `<div class="page-title">출석 통계</div><div class="page-sub">레벨별 필터 · 상태별 비율 및 횟수</div>`;
+  const card = document.createElement('div'); card.className = 'card';
+  card.innerHTML = `
+    <div class="row mb8">
+      <select id="levelFilter"><option value="">전체 레벨</option>${LEVELS.map(l=>`<option value="${l}">${l}</option>`).join('')}</select>
+      <input id="nameFilter" placeholder="이름 검색" />
+      <button class="btn small" id="applyFilter">필터 적용</button>
+    </div>
+    <div id="statsTable">불러오는 중...</div>
+  `;
+  content.appendChild(card);
+  async function load() {
+    const level = document.getElementById('levelFilter').value;
+    const name = document.getElementById('nameFilter').value.trim();
+    const { stats } = await api(`/attendance/stats${level ? '?level=' + encodeURIComponent(level) : ''}`);
+    const filtered = name ? stats.filter(s => s.student.name.includes(name)) : stats;
+    document.getElementById('statsTable').innerHTML = renderStatsTable(filtered);
+  }
+  document.getElementById('applyFilter').onclick = load;
+  load();
+}
+
+// ===================== 피드백 =====================
+async function renderFeedback() {
+  const content = document.getElementById('content');
+  content.innerHTML = `<div class="page-title">피드백</div>`;
+  if (ME.role === 'student') return renderFeedbackStudent(content);
+
+  content.innerHTML += `<div class="page-sub">강사 → 수강생 피드백 열람, 수강생 → 강사 피드백(익명) 열람</div>`;
+  const { students } = await api('/students?status=active');
+  const card = document.createElement('div'); card.className = 'card';
+  card.innerHTML = `<h3>수강생별 강사 피드백</h3>
+    <select id="studFbSel">${students.map(s => `<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select>
+    <div id="fbList" class="mt16"></div>`;
+  content.appendChild(card);
+  async function loadFb() {
+    const sid = document.getElementById('studFbSel').value;
+    const { feedback } = await api(`/feedback/instructor?studentId=${sid}`);
+    document.getElementById('fbList').innerHTML = feedback.length ? feedback.map(f => `<div class="card"><b>${esc(f.authorName)}</b> · <span class="muted">${new Date(f.createdAt).toLocaleString()}</span><div class="mt8">${esc(f.comment)}</div></div>`).join('') : '<div class="muted">피드백 없음</div>';
+  }
+  document.getElementById('studFbSel').onchange = loadFb;
+  if (students.length) loadFb();
+
+  if (isAtLeast_admin()) {
+    const card2 = document.createElement('div'); card2.className = 'card';
+    card2.innerHTML = `<h3>수강생 → 강사 피드백 (작성자 확인 가능)</h3><div id="studentToInstructor">불러오는 중...</div>`;
+    content.appendChild(card2);
+    const { feedback } = await api('/feedback/student');
+    document.getElementById('studentToInstructor').innerHTML = feedback.length ? feedback.map(f => `
+      <div class="card"><b>${esc(f.studentName || '익명')}</b> · <span class="muted">${new Date(f.createdAt).toLocaleString()}</span>
+      <div class="mt8">난이도: ${esc(f.difficulty||'-')} / 분위기: ${(f.moods||[]).join(', ')||'-'}</div>
+      <div class="mt8">${esc(f.comment)}</div></div>
+    `).join('') : '<div class="muted">피드백 없음</div>';
+  }
+}
+function isAtLeast_admin() { return ['master','region_rep','admin'].includes(ME.role); }
+
+async function renderFeedbackStudent(content) {
+  content.innerHTML += `<div class="page-sub">내가 받은 피드백 확인 · 강사에게 피드백 남기기 (강사에겐 익명 처리)</div>`;
+  const card = document.createElement('div'); card.className = 'card';
+  card.innerHTML = `<h3>내가 받은 강사/리더 피드백</h3><div id="myFb">불러오는 중...</div>`;
+  content.appendChild(card);
+  const { feedback } = await api(`/feedback/instructor?studentId=${ME.id}`);
+  document.getElementById('myFb').innerHTML = feedback.length ? feedback.map(f => `<div class="card"><b>${esc(f.authorName)}</b> · <span class="muted">${new Date(f.createdAt).toLocaleString()}</span><div class="mt8">${esc(f.comment)}</div></div>`).join('') : '<div class="muted">아직 받은 피드백이 없습니다.</div>';
+
+  const { staff } = await api('/staff');
+  const instructors = staff.filter(s => ['instructor','admin','region_rep','master'].includes(s.role));
+  const card2 = document.createElement('div'); card2.className = 'card';
+  card2.innerHTML = `
+    <h3>강사에게 피드백 남기기</h3>
+    <div class="field"><label>강사 선택</label><select id="instrSel">${instructors.map(i=>`<option value="${i.id}">${esc(i.name)}</option>`).join('')}</select></div>
+    <div class="field"><label>수업 난이도 (택1)</label>
+      <select id="difficultySel"><option value="어려워요">어려워요</option><option value="적당해요">적당해요</option><option value="쉬워요">쉬워요</option><option value="이해됐어요">이해됐어요</option></select>
+    </div>
+    <div class="field"><label>수업 분위기 (복수선택 가능)</label>
+      <div class="row">
+        ${['재밌어요','무서워요','빠듯해요','편안해요'].map(m=>`<label><input type="checkbox" value="${m}" class="moodChk"/> ${m}</label>`).join(' ')}
+      </div>
+    </div>
+    <div class="field"><label>자유 코멘트</label><textarea id="fbFreeText"></textarea></div>
+    <button class="btn primary" id="sendFb">제출 (선택)</button>
+    <div id="fbSendMsg" class="mt8"></div>
+  `;
+  content.appendChild(card2);
+  document.getElementById('sendFb').onclick = async () => {
+    const instructorId = document.getElementById('instrSel').value;
+    const difficulty = document.getElementById('difficultySel').value;
+    const moods = [...document.querySelectorAll('.moodChk:checked')].map(c => c.value);
+    const comment = document.getElementById('fbFreeText').value;
+    await api('/feedback/student', { method: 'POST', body: JSON.stringify({ instructorId, difficulty, moods, comment }) });
+    document.getElementById('fbSendMsg').innerHTML = '<div class="msg ok">제출되었습니다. (강사에게는 익명으로 전달됩니다)</div>';
+  };
+}
+
+// ===================== 과제(선물) =====================
+async function renderAssignments() {
+  const content = document.getElementById('content');
+  content.innerHTML = `<div class="page-title">과제(선물) 공지</div><div class="page-sub">레벨/요일 대상 공지 · 데드라인 D-1/D-2 알림 · 파일/링크 제출</div>`;
+
+  if (canCreateAssignment()) {
+    const createCard = document.createElement('div'); createCard.className = 'card';
+    createCard.innerHTML = `
+      <h3>새 과제(선물) 등록</h3>
+      <div class="field"><label>제목</label><input id="aTitle" /></div>
+      <div class="field"><label>설명</label><textarea id="aDesc"></textarea></div>
+      <div class="row">
+        <div class="field" style="flex:1"><label>대상 레벨</label><select id="aLevel"><option value="">전체</option>${LEVELS.map(l=>`<option value="${l}">${l}</option>`).join('')}</select></div>
+        <div class="field" style="flex:1"><label>대상 요일</label><select id="aWeekday"><option value="">전체</option>${WEEKDAYS.map(w=>`<option value="${w}">${w}</option>`).join('')}</select></div>
+      </div>
+      <div class="row">
+        <div class="field" style="flex:1"><label>마감일</label><input id="aDeadline" type="date" /></div>
+        <div class="field" style="flex:1"><label>제출 방식</label><select id="aSubType"><option value="none">제출 없음(완료체크만)</option><option value="file">파일</option><option value="link">링크</option><option value="both">파일+링크 모두 허용</option></select></div>
+      </div>
+      <button class="btn primary" id="createAssign">등록</button>
+    `;
+    content.appendChild(createCard);
+    document.getElementById('createAssign').onclick = async () => {
+      const body = {
+        title: document.getElementById('aTitle').value, description: document.getElementById('aDesc').value,
+        level: document.getElementById('aLevel').value || null, weekday: document.getElementById('aWeekday').value || null,
+        deadline: document.getElementById('aDeadline').value, submissionType: document.getElementById('aSubType').value,
+        regionId: ttState.regionId || (REGIONS[0] && REGIONS[0].id)
+      };
+      if (!body.title || !body.deadline) return alert('제목과 마감일은 필수입니다.');
+      await api('/assignments', { method: 'POST', body: JSON.stringify(body) });
+      renderAssignments();
+    };
+  }
+
+  const listCard = document.createElement('div'); listCard.className = 'card';
+  listCard.innerHTML = `<h3>과제 목록</h3><div id="aList">불러오는 중...</div>`;
+  content.appendChild(listCard);
+  const q = ME.role === 'student' && ME.profile && ME.profile.level ? `?level=${encodeURIComponent(ME.profile.level)}` : '';
+  const { assignments } = await api('/assignments' + q);
+  document.getElementById('aList').innerHTML = assignments.length ? assignments.map(a => renderAssignmentRow(a)).join('') : '<div class="muted">등록된 과제가 없습니다.</div>';
+}
+
+function renderAssignmentRow(a) {
+  const target = [a.level || '전체 레벨', a.weekday ? a.weekday + '요일' : '전체 요일'].join(' · ');
+  let submitBox = '';
+  if (ME.role === 'student') {
+    if (a.mySubmission) {
+      submitBox = `<div class="msg ok mt8">제출 완료 (${a.mySubmission.type === 'link' ? `<a href="${esc(a.mySubmission.content)}" target="_blank">링크 보기</a>` : a.mySubmission.type === 'file' ? `<a href="${esc(a.mySubmission.content)}" target="_blank">첨부파일 보기</a>` : '완료 체크'}) ${a.mySubmission.comment ? '- ' + esc(a.mySubmission.comment) : ''}</div>`;
+    } else {
+      submitBox = `
+        <div class="mt8">
+          ${a.submissionType === 'link' || a.submissionType === 'both' ? `<div class="field"><label>제출 링크</label><input id="link_${a.id}" placeholder="https://..." /></div>` : ''}
+          ${a.submissionType === 'file' || a.submissionType === 'both' ? `<div class="field"><label>파일 선택</label><input id="file_${a.id}" type="file" /></div>` : ''}
+          <div class="field"><label>코멘트</label><input id="comment_${a.id}" /></div>
+          <button class="btn small primary" onclick="submitAssignment(${a.id}, '${a.submissionType}')">${a.submissionType === 'none' ? '완료 체크' : '제출'}</button>
+        </div>`;
+    }
+  } else if (canCreateAssignment()) {
+    submitBox = `<div class="mt8"><button class="btn small ghost" onclick="viewSubmissions(${a.id})">제출 현황 (${a.submissionCount})</button><div id="subs_${a.id}"></div></div>`;
+  }
+  return `<div class="card">
+    <b>${esc(a.title)}</b> <span class="badge internal">마감 ${esc(a.deadline)}</span>
+    <div class="muted mt8">${target}</div>
+    <div class="mt8">${esc(a.description)}</div>
+    ${submitBox}
+  </div>`;
+}
+
+async function submitAssignment(id, submissionType) {
+  const comment = document.getElementById(`comment_${id}`).value;
+  let type = 'none', content = '', fileName = '', fileData = '';
+  const linkEl = document.getElementById(`link_${id}`);
+  const fileEl = document.getElementById(`file_${id}`);
+  if (linkEl && linkEl.value) { type = 'link'; content = linkEl.value; }
+  else if (fileEl && fileEl.files[0]) {
+    type = 'file';
+    const file = fileEl.files[0];
+    fileName = file.name;
+    fileData = await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(',')[1]);
+      reader.readAsDataURL(file);
+    });
+  }
+  await api('/assignments/submit', { method: 'POST', body: JSON.stringify({ assignmentId: id, type, content, comment, fileName, fileData }) });
+  renderAssignments();
+}
+
+async function viewSubmissions(id) {
+  const { submissions } = await api(`/assignments/${id}/submissions`);
+  document.getElementById(`subs_${id}`).innerHTML = submissions.length ? `<table><thead><tr><th>수강생</th><th>제출</th><th>코멘트</th><th>제출일시</th></tr></thead><tbody>${submissions.map(s => `<tr><td>${esc(s.studentName)}</td><td>${s.type==='link'?`<a href="${esc(s.content)}" target="_blank">링크</a>`:s.type==='file'?`<a href="${esc(s.content)}" target="_blank">파일</a>`:'완료'}</td><td>${esc(s.comment)}</td><td>${new Date(s.completedAt).toLocaleString()}</td></tr>`).join('')}</tbody></table>` : '<div class="muted">제출 없음</div>';
+}
+
+// ===================== 결제관리 =====================
+async function renderPayments() {
+  const content = document.getElementById('content');
+  content.innerHTML = `<div class="page-title">결제관리</div><div class="page-sub">분납 회차 체크 · 후불 여부 · 환불</div>`;
+
+  if (canManagePayments()) {
+    const { students } = await api('/students?status=active');
+    const createCard = document.createElement('div'); createCard.className = 'card';
+    createCard.innerHTML = `
+      <h3>결제 등록</h3>
+      <div class="row">
+        <div class="field" style="flex:1"><label>수강생</label><select id="pStudent">${students.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join('')}</select></div>
+        <div class="field" style="flex:1"><label>입금자명 (수강생명과 다를 수 있음, 필수)</label><input id="pDepositor" /></div>
+      </div>
+      <div class="row">
+        <div class="field" style="flex:1"><label>총 금액</label><input id="pAmount" type="number" /></div>
+        <div class="field" style="flex:1"><label>분납 회차 수</label><input id="pInstCount" type="number" value="1" min="1" /></div>
+        <div class="field"><label><input type="checkbox" id="pDeferred" /> 후불(예외)</label></div>
+      </div>
+      <button class="btn primary" id="createPayment">등록</button>
+    `;
+    content.appendChild(createCard);
+    document.getElementById('createPayment').onclick = async () => {
+      const studentId = document.getElementById('pStudent').value;
+      const depositorName = document.getElementById('pDepositor').value.trim();
+      const amount = Number(document.getElementById('pAmount').value);
+      const count = Number(document.getElementById('pInstCount').value) || 1;
+      const isDeferred = document.getElementById('pDeferred').checked;
+      if (!depositorName || !amount) return alert('입금자명과 금액은 필수입니다.');
+      const per = Math.round(amount / count);
+      const installments = Array.from({ length: count }, (_, i) => ({ no: i + 1, amount: per, dueDate: null, paid: false }));
+      await api('/payments', { method: 'POST', body: JSON.stringify({ studentId, depositorName, amount, installments, isDeferred }) });
+      renderPayments();
+    };
+  }
+
+  const listCard = document.createElement('div'); listCard.className = 'card';
+  listCard.innerHTML = `<h3>결제 내역</h3><div id="payList">불러오는 중...</div>`;
+  content.appendChild(listCard);
+  const q = ME.role === 'student' ? `?studentId=${ME.id}` : '';
+  const { payments } = await api('/payments' + q);
+  document.getElementById('payList').innerHTML = payments.length ? payments.map(p => `
+    <div class="card">
+      <b>${esc(p.studentName)}</b> · 입금자: ${esc(p.depositorName)} · 총 ${Number(p.amount).toLocaleString()}원
+      ${p.isDeferred ? '<span class="badge pending">후불</span>' : ''}
+      <div class="mt8 row">
+        ${p.installments.map(i => `<button class="btn small ${i.paid?'':'ghost'}" ${canManagePayments()?`onclick="toggleInstallment(${p.id},${i.no})"`:'disabled'}>${i.no}회차 ${Number(i.amount).toLocaleString()}원 ${i.paid?'✓입금':'미입금'}</button>`).join('')}
+      </div>
+      ${p.refunds && p.refunds.length ? `<div class="mt8 muted">환불: ${p.refunds.map(r=>`${Number(r.amount).toLocaleString()}원 (${esc(r.reason)})`).join(', ')}</div>` : ''}
+      ${canManagePayments() ? `<div class="mt8"><button class="btn small danger" onclick="openRefund(${p.studentId})">환불 처리</button></div>` : ''}
+    </div>
+  `).join('') : '<div class="muted">결제 내역 없음</div>';
+}
+async function toggleInstallment(paymentId, no) {
+  await api(`/payments/${paymentId}/installment/${no}/toggle`, { method: 'POST' });
+  renderPayments();
+}
+function openRefund(studentId) {
+  const amount = prompt('환불 금액을 입력하세요');
+  if (!amount) return;
+  const reason = prompt('환불 사유를 입력하세요') || '';
+  api('/refunds', { method: 'POST', body: JSON.stringify({ studentId, amount: Number(amount), reason }) }).then(renderPayments);
+}
+
+// ===================== 승인관리 =====================
+async function renderApprovals() {
+  const content = document.getElementById('content');
+  content.innerHTML = `<div class="page-title">승인관리</div><div class="page-sub">강사/수강생 신규 가입 승인 · 비밀번호 초기화 · 퇴사 처리</div>`;
+
+  const pendCard = document.createElement('div'); pendCard.className = 'card';
+  pendCard.innerHTML = `<h3>승인 대기 목록</h3><div id="pendList">불러오는 중...</div>`;
+  content.appendChild(pendCard);
+  const { users } = await api('/pending-users');
+  document.getElementById('pendList').innerHTML = users.length ? `<table><thead><tr><th>이름</th><th>역할</th><th>휴대폰</th><th>프로필</th><th></th></tr></thead><tbody>
+    ${users.map(u => `<tr><td>${esc(u.name)}</td><td>${ROLE_LABEL[u.role]}</td><td>${esc(u.phone)}</td><td>${esc(JSON.stringify(u.profile||{}))}</td><td><button class="btn small primary" onclick="approveUser(${u.id})">승인</button></td></tr>`).join('')}
+  </tbody></table>` : '<div class="muted">승인 대기 없음</div>';
+
+  const listCard = document.createElement('div'); listCard.className = 'card';
+  listCard.innerHTML = `<h3>수강생 관리 (수강중/퇴사)</h3>
+    <div class="row mb8"><button class="btn small" id="showActive">수강중</button><button class="btn small ghost" id="showInactive">퇴사</button></div>
+    <div id="studentMgmt">불러오는 중...</div>`;
+  content.appendChild(listCard);
+  document.getElementById('showActive').onclick = () => loadStudentMgmt('active');
+  document.getElementById('showInactive').onclick = () => loadStudentMgmt('inactive');
+  loadStudentMgmt('active');
+}
+async function approveUser(id) {
+  await api(`/users/${id}/approve`, { method: 'POST' });
+  renderApprovals();
+}
+async function loadStudentMgmt(status) {
+  const { students } = await api(`/students?status=${status}`);
+  document.getElementById('studentMgmt').innerHTML = students.length ? `<table><thead><tr><th>이름</th><th>휴대폰</th><th>레벨</th><th></th></tr></thead><tbody>
+    ${students.map(s => `<tr><td>${esc(s.name)}</td><td>${esc(s.phone)}</td><td>${esc((s.profile||{}).level||'-')}</td><td>
+      ${status==='active' ? `<button class="btn small danger" onclick="setStudentStatus(${s.id},'inactive')">퇴사 처리</button>` : `<button class="btn small" onclick="setStudentStatus(${s.id},'active')">복귀 처리</button>`}
+      <button class="btn small ghost" onclick="resetPw(${s.id})">비밀번호 초기화</button>
+    </td></tr>`).join('')}
+  </tbody></table>` : '<div class="muted">해당 없음</div>';
+}
+async function setStudentStatus(id, status) {
+  if (status === 'inactive' && !confirm('퇴사 처리하면 목록에서 숨겨지고 본인/타인이 열람할 수 없습니다. 계속할까요?')) return;
+  await api(`/users/${id}/status`, { method: 'POST', body: JSON.stringify({ status }) });
+  loadStudentMgmt(status === 'inactive' ? 'active' : 'inactive');
+}
+async function resetPw(id) {
+  const { tempPassword } = await api(`/users/${id}/reset-password`, { method: 'POST' });
+  alert('임시 비밀번호: ' + tempPassword + '\n해당 수강생/강사에게 전달해 주세요.');
+}
+
+// ===================== 시간표 관리 (템플릿) =====================
+async function renderTimetableAdmin() {
+  const content = document.getElementById('content');
+  content.innerHTML = `<div class="page-title">시간표 관리</div><div class="page-sub">기본틀 등록 → 매달 자동 생성</div>`;
+  const card = document.createElement('div'); card.className = 'card';
+  const regionOpts = REGIONS.map(r => `<option value="${r.id}">${esc(r.name)}</option>`).join('');
+  card.innerHTML = `
+    <h3>기본틀 등록</h3>
+    <div class="row">
+      <div class="field" style="flex:1"><label>지역</label><select id="tRegion">${regionOpts}</select></div>
+      <div class="field" style="flex:1"><label>구분</label><select id="tInternal"><option value="false">아카데미 시간표</option><option value="true">내부일정</option></select></div>
+    </div>
+    <div class="row">
+      <div class="field" style="flex:1"><label>제목/레벨명</label><input id="tTitle" placeholder="예: 1Lv 베이직" /></div>
+      <div class="field" style="flex:1"><label>레벨 코드(선택)</label><select id="tLevel"><option value="">-</option>${LEVELS.map(l=>`<option value="${l}">${l}</option>`).join('')}</select></div>
+    </div>
+    <div class="row">
+      <div class="field" style="flex:1"><label>요일</label><select id="tWeekday">${WEEKDAYS.map(w=>`<option value="${w}">${w}</option>`).join('')}</select></div>
+      <div class="field" style="flex:1"><label>시작</label><input id="tStart" type="time" value="19:00" /></div>
+      <div class="field" style="flex:1"><label>종료</label><input id="tEnd" type="time" value="21:00" /></div>
+      <div class="field" style="flex:1"><label>룸</label><input id="tRoom" placeholder="A" /></div>
+    </div>
+    <button class="btn primary" id="addTemplate">등록</button>
+    <div id="templateList" class="mt16"></div>
+  `;
+  content.appendChild(card);
+  document.getElementById('addTemplate').onclick = async () => {
+    const body = {
+      regionId: document.getElementById('tRegion').value, isInternal: document.getElementById('tInternal').value === 'true',
+      title: document.getElementById('tTitle').value, level: document.getElementById('tLevel').value || null,
+      weekday: document.getElementById('tWeekday').value, startTime: document.getElementById('tStart').value,
+      endTime: document.getElementById('tEnd').value, room: document.getElementById('tRoom').value
+    };
+    await api('/timetable/template', { method: 'POST', body: JSON.stringify(body) });
+    renderTimetableAdmin();
+  };
+  const { templates } = await api('/timetable/template');
+  document.getElementById('templateList').innerHTML = templates.length ? `<table><thead><tr><th>구분</th><th>제목</th><th>요일</th><th>시간</th><th>룸</th><th></th></tr></thead><tbody>
+    ${templates.map(t => `<tr><td>${t.isInternal?'<span class="badge internal">내부</span>':'아카데미'}</td><td>${esc(t.title)}</td><td>${t.weekday}</td><td>${esc(t.startTime)}-${esc(t.endTime)}</td><td>${esc(t.room||'')}</td><td><button class="btn small danger" onclick="deleteTemplate(${t.id})">삭제</button></td></tr>`).join('')}
+  </tbody></table>` : '<div class="muted">등록된 기본틀 없음</div>';
+}
+async function deleteTemplate(id) {
+  await api(`/timetable/template/${id}`, { method: 'DELETE' });
+  renderTimetableAdmin();
+}
+
+// ===================== 내 정보 =====================
+async function renderAccount() {
+  const content = document.getElementById('content');
+  content.innerHTML = `
+    <div class="page-title">내 정보</div>
+    <div class="card">
+      <div>이름: ${esc(ME.name)}</div>
+      <div>휴대폰: ${esc(ME.phone)}</div>
+      <div>역할: ${ROLE_LABEL[ME.role]}</div>
+    </div>
+    <div class="card">
+      <h3>비밀번호 변경</h3>
+      <div class="field"><input id="newPw" type="password" placeholder="새 비밀번호" /></div>
+      <button class="btn primary" id="changePwBtn">변경</button>
+      <div id="pwMsg" class="mt8"></div>
+    </div>
+  `;
+  document.getElementById('changePwBtn').onclick = async () => {
+    const newPassword = document.getElementById('newPw').value;
+    try { await api('/change-password', { method: 'POST', body: JSON.stringify({ newPassword }) }); document.getElementById('pwMsg').innerHTML = '<div class="msg ok">변경되었습니다.</div>'; }
+    catch (e) { document.getElementById('pwMsg').innerHTML = `<div class="msg error">${esc(e.message)}</div>`; }
+  };
+}
+
+boot();
+</script>
+</body>
+</html>
