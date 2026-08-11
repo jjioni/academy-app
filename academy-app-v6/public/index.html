@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>아카데미 시간표</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<div class="center-screen">
+  <div class="auth-card">
+    <h1>아카데미 시간표</h1>
+    <div class="sub">로그인 후 시간표 · 출석 · 피드백 · 과제를 확인하세요.</div>
+
+    <div class="tabs-switch">
+      <button id="tabLogin" class="active">로그인</button>
+      <button id="tabSignup">회원가입</button>
+    </div>
+
+    <div id="msg"></div>
+
+    <form id="loginForm">
+      <div class="field"><label>아이디</label><input name="phone" placeholder="휴대폰번호 또는 아이디" required /></div>
+      <div class="field"><label>비밀번호</label><input name="password" type="password" required /></div>
+      <button class="btn primary block" type="submit">로그인</button>
+    </form>
+
+    <form id="signupForm" style="display:none">
+      <div class="field">
+        <label>가입 유형</label>
+        <select name="role" id="signupRole">
+          <option value="student">수강생</option>
+          <option value="instructor">강사</option>
+        </select>
+      </div>
+      <div class="field"><label>이름</label><input name="name" required /></div>
+      <div class="field"><label>지점</label><select name="regionId" id="signupRegion"></select></div>
+      <div class="field"><label>휴대폰번호</label><input name="phone" placeholder="01012345678" required /></div>
+      <div class="field"><label>비밀번호</label><input name="password" type="password" required /></div>
+
+      <div id="studentFields">
+        <div class="field"><label>수강 희망 레벨</label>
+          <select name="level">
+            <option value="비기너,러너">비기너, 러너</option>
+            <option value="챌린저,위너">챌린저, 위너</option>
+            <option value="강사코스-이나모리">강사코스-이나모리</option>
+            <option value="강사코스-머스크">강사코스-머스크</option>
+          </select>
+        </div>
+        <div class="field"><label>수강 희망 요일 (쉼표로 구분, 예: 월,수)</label><input name="desiredDays" /></div>
+        <div class="field"><label>경력</label><input name="career" placeholder="예: 3-6개월 미만" /></div>
+        <div class="field"><label>입사 시기 (년/분기)</label><input name="joinPeriod" placeholder="예: 2026년 1분기" /></div>
+        <div class="field"><label>MBTI</label><input name="mbti" /></div>
+        <div class="field"><label>DISC</label><input name="disc" /></div>
+      </div>
+      <div id="instructorFields" style="display:none">
+        <div class="field"><label>연락처(확인용, 정산 목적)</label><input name="phone2" placeholder="현금영수증 발급용 연락처" /></div>
+        <div class="field"><label>주민등록번호 (현금영수증 발급용, 선택)</label><input name="rrn" placeholder="000000-0000000" /></div>
+      </div>
+
+      <button class="btn primary block" type="submit">회원가입 신청</button>
+      <div class="muted mt8" style="font-size:12px">가입 신청 후 관리자 승인이 완료되어야 로그인할 수 있습니다.</div>
+    </form>
+  </div>
+</div>
+
+<script>
+const msgBox = document.getElementById('msg');
+function showMsg(text, type) { msgBox.innerHTML = `<div class="msg ${type}">${text}</div>`; }
+
+document.getElementById('tabLogin').onclick = () => {
+  document.getElementById('tabLogin').classList.add('active');
+  document.getElementById('tabSignup').classList.remove('active');
+  document.getElementById('loginForm').style.display = 'block';
+  document.getElementById('signupForm').style.display = 'none';
+  msgBox.innerHTML = '';
+};
+document.getElementById('tabSignup').onclick = () => {
+  document.getElementById('tabSignup').classList.add('active');
+  document.getElementById('tabLogin').classList.remove('active');
+  document.getElementById('signupForm').style.display = 'block';
+  document.getElementById('loginForm').style.display = 'none';
+  msgBox.innerHTML = '';
+};
+document.getElementById('signupRole').onchange = (e) => {
+  document.getElementById('studentFields').style.display = e.target.value === 'student' ? 'block' : 'none';
+  document.getElementById('instructorFields').style.display = e.target.value === 'instructor' ? 'block' : 'none';
+};
+
+document.getElementById('loginForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const res = await fetch('/api/login', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(Object.fromEntries(fd)) });
+  const data = await res.json();
+  if (!res.ok) return showMsg(data.error || '로그인 실패', 'error');
+  location.href = '/dashboard.html';
+};
+
+document.getElementById('signupForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const fd = Object.fromEntries(new FormData(e.target));
+  const body = {
+    role: fd.role, name: fd.name, phone: fd.phone, password: fd.password, regionId: fd.regionId,
+    level: fd.level, desiredDays: (fd.desiredDays || '').split(',').map(s => s.trim()).filter(Boolean),
+    career: fd.career, joinPeriod: fd.joinPeriod, mbti: fd.mbti, disc: fd.disc,
+    extra: fd.role === 'instructor' ? JSON.stringify({ phone2: fd.phone2, rrn: fd.rrn }) : ''
+  };
+  const res = await fetch('/api/signup', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  const data = await res.json();
+  if (!res.ok) return showMsg(data.error || '가입 실패', 'error');
+  showMsg('가입 신청 완료! 관리자 승인 후 로그인할 수 있습니다.', 'ok');
+  e.target.reset();
+};
+
+// if already logged in, go straight to dashboard
+fetch('/api/me').then(r => r.json()).then(d => { if (d.user) location.href = '/dashboard.html'; });
+
+// populate region select (needs a plain fetch since /api/regions doesn't require login)
+fetch('/api/regions').then(r => r.json()).then(d => {
+  const sel = document.getElementById('signupRegion');
+  sel.innerHTML = (d.regions || []).map(r => `<option value="${r.id}">${r.name}</option>`).join('');
+}).catch(() => {});
+</script>
+</body>
+</html>
