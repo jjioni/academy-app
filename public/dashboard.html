@@ -25,7 +25,10 @@ let ME = null;
 let REGIONS = [];
 const WEEKDAYS = ['일','월','화','수','목','금','토'];
 const STATUSES = ['출석','보강','지각','조퇴','병결','행사','결석'];
-const LEVELS = ['1Lv(베이직)','2Lv(베이직)','3Lv(우먼)','4Lv(맨즈)'];
+// individual level codes (1레벨/2레벨 run as a pair, 3레벨/4레벨 run as a pair; students enrolled
+// in a pair have both codes in profile.levels, so filtering by a single level still matches them)
+const LEVELS = ['1레벨','2레벨','3레벨','4레벨','강사코스-이나모리','강사코스-머스크'];
+const LEVEL_LABELS = { '1레벨': '1레벨 (비기너)', '2레벨': '2레벨 (러너)', '3레벨': '3레벨 (챌린저)', '4레벨': '4레벨 (워너)', '강사코스-이나모리': '강사코스-이나모리', '강사코스-머스크': '강사코스-머스크' };
 
 async function api(path, opts) {
   const res = await fetch('/api' + path, Object.assign({ headers: { 'Content-Type': 'application/json' } }, opts));
@@ -87,17 +90,52 @@ function route() {
 }
 
 async function loadNotifBanner() {
+  const box = document.getElementById('notifBanner');
+  let html = '';
   try {
     const { notifications } = await api('/notifications/assignments');
-    const box = document.getElementById('notifBanner');
-    if (!notifications.length) { box.innerHTML = ''; return; }
-    box.innerHTML = `<div class="notif-banner">📌 마감 임박 과제: ` +
-      notifications.map(n => `<b>${esc(n.title)}</b>(${n.dDay === 0 ? '오늘 마감' : 'D-' + n.dDay})`).join(', ') + `</div>`;
+    if (notifications.length) {
+      html += `<div class="notif-banner">📌 마감 임박 과제: ` +
+        notifications.map(n => `<b>${esc(n.title)}</b>(${n.dDay === 0 ? '오늘 마감' : 'D-' + n.dDay})`).join(', ') + `</div>`;
+    }
   } catch (e) {}
+  // approval-pending alerts (store leader / admin only)
+  if (canApprove()) {
+    try {
+      const { notifications: mine } = await api('/notifications/mine');
+      const pendingApprovals = mine.filter(n => n.type === 'approval_pending');
+      if (pendingApprovals.length) {
+        html += `<div class="notif-banner">🔔 승인 대기 알림: ` +
+          pendingApprovals.map(n => esc(n.message)).join(' · ') +
+          ` <a href="#approvals" onclick="markNotifsRead(${JSON.stringify(pendingApprovals.map(n=>n.id))})" style="text-decoration:underline">승인관리로 이동</a></div>`;
+      }
+    } catch (e) {}
+  }
+  box.innerHTML = html;
+}
+
+async function markNotifsRead(ids) {
+  await Promise.all(ids.map(id => api(`/notifications/${id}/read`, { method: 'POST' }).catch(() => {})));
+  setTimeout(loadNotifBanner, 300);
 }
 
 // ===================== 시간표 =====================
 let ttState = { year: new Date().getFullYear(), month: new Date().getMonth() + 1, showInternal: false, regionId: REGIONS[0] ? REGIONS[0].id : '' };
+
+// fixed brand colors per level (same pastel-bg / saturated-text tone across all five)
+const LEVEL_COLOR_MAP = {
+  '1레벨': { bg: '#FCE7F3', text: '#DB2777' },            // 핑크
+  '2레벨': { bg: '#FEF9C3', text: '#B45309' },            // 연노랑
+  '3레벨': { bg: '#D1FAE5', text: '#059669' },            // 민트
+  '4레벨': { bg: '#DBEAFE', text: '#2563EB' },            // 하늘
+  '강사코스-이나모리': { bg: '#EDE9FE', text: '#7C3AED' }, // 연보라
+  '강사코스-머스크': { bg: '#EDE9FE', text: '#7C3AED' },   // 연보라
+  '강사코스': { bg: '#EDE9FE', text: '#7C3AED' }           // 연보라 (그룹 미상 강사코스)
+};
+const DEFAULT_ITEM_COLOR = { bg: '#eef1ff', text: '#3b6ef6' };
+function colorForLevel(levelKey, titleKey) {
+  return LEVEL_COLOR_MAP[levelKey] || LEVEL_COLOR_MAP[titleKey] || DEFAULT_ITEM_COLOR;
+}
 
 async function renderTimetable() {
   const content = document.getElementById('content');
@@ -112,6 +150,7 @@ async function renderTimetable() {
       <select id="regionSel" style="margin-left:12px">${regionOpts}</select>
       <label class="check-toggle"><input type="checkbox" id="internalToggle" ${ttState.showInternal?'checked':''}/> 내부일정 보기</label>
     </div>
+    <div id="legend" class="level-legend"></div>
     <div class="month-grid" id="grid"></div>
   `;
   content.appendChild(card);
@@ -127,13 +166,33 @@ async function renderTimetable() {
   const firstDow = new Date(ttState.year, ttState.month - 1, 1).getDay();
   const blanks = Array(firstDow).fill('<div></div>').join('');
   const todayStr = new Date().toISOString().slice(0,10);
+
+  // legend: one entry per distinct level appearing this month, colored by level code so the
+  // same level always reads the same color across every day it appears on.
+  const legendMap = new Map(); // level code -> display label
+  days.forEach(d => d.items.forEach(it => {
+    const code = it.level || it.title || '기타';
+    if (!legendMap.has(code)) legendMap.set(code, LEVEL_LABELS[it.level] || it.title || it.level || '기타');
+  }));
+  document.getElementById('legend').innerHTML = [...legendMap.entries()].map(([code, lbl]) => {
+    const c = colorForLevel(code);
+    return `<span class="chip"><span class="dot" style="background:${c.text}"></span>${esc(lbl)}</span>`;
+  }).join('') || '<span class="muted">등록된 수업 없음</span>';
+
   const cellsHtml = days.map(d => {
-    const items = d.items.map(it => {
+    const sorted = [...d.items].sort((a, b) => (a.startTime || '').localeCompare(b.startTime || ''));
+    const items = sorted.map(it => {
       const cls = it.isInternal ? 'internal' : '';
-      const label = it.title || it.level || '';
-      return `<div class="day-item ${cls}" title="${esc(label)} ${esc(it.startTime||'')}-${esc(it.endTime||'')} ${esc(it.room||'')}" onclick="openAttendanceFor('${it.instanceKey}','${d.date}')">${esc(label)}<br><span class="muted">${esc(it.startTime||'')} ${esc(it.room||'')}</span></div>`;
+      const label = LEVEL_LABELS[it.level] || it.title || it.level || '';
+      const c = colorForLevel(it.level, it.title);
+      const style = `--level-bg:${c.bg};--level-color:${c.text};color:${c.text}`;
+      const meta = [it.startTime, it.room].filter(Boolean).join(' · ');
+      return `<div class="day-item ${cls}" style="${style}" title="${esc(label)} ${esc(it.startTime||'')}-${esc(it.endTime||'')} ${esc(it.room||'')}" onclick="openAttendanceFor('${it.instanceKey}','${d.date}')">
+        <span class="lv-name">${esc(label)}</span><span class="lv-meta">${esc(meta)}</span>
+      </div>`;
     }).join('');
-    return `<div class="day-cell ${d.date===todayStr?'today':''}"><div class="date-num">${Number(d.date.slice(8,10))}</div>${items}</div>`;
+    const isWeekend = d.weekday === '금' || d.weekday === '토' || d.weekday === '일';
+    return `<div class="day-cell ${d.date===todayStr?'today':''} ${isWeekend && !sorted.length?'weekend-empty':''}"><div class="date-num">${Number(d.date.slice(8,10))}</div>${items}</div>`;
   }).join('');
   grid.innerHTML = dowHtml + blanks + cellsHtml;
 }
@@ -285,7 +344,7 @@ async function renderStats() {
   const card = document.createElement('div'); card.className = 'card';
   card.innerHTML = `
     <div class="row mb8">
-      <select id="levelFilter"><option value="">전체 레벨</option>${LEVELS.map(l=>`<option value="${l}">${l}</option>`).join('')}</select>
+      <select id="levelFilter"><option value="">전체 레벨</option>${LEVELS.map(l=>`<option value="${l}">${esc(LEVEL_LABELS[l]||l)}</option>`).join('')}</select>
       <input id="nameFilter" placeholder="이름 검색" />
       <button class="btn small" id="applyFilter">필터 적용</button>
     </div>
@@ -387,7 +446,7 @@ async function renderAssignments() {
       <div class="field"><label>제목</label><input id="aTitle" /></div>
       <div class="field"><label>설명</label><textarea id="aDesc"></textarea></div>
       <div class="row">
-        <div class="field" style="flex:1"><label>대상 레벨</label><select id="aLevel"><option value="">전체</option>${LEVELS.map(l=>`<option value="${l}">${l}</option>`).join('')}</select></div>
+        <div class="field" style="flex:1"><label>대상 레벨</label><select id="aLevel"><option value="">전체</option>${LEVELS.map(l=>`<option value="${l}">${esc(LEVEL_LABELS[l]||l)}</option>`).join('')}</select></div>
         <div class="field" style="flex:1"><label>대상 요일</label><select id="aWeekday"><option value="">전체</option>${WEEKDAYS.map(w=>`<option value="${w}">${w}</option>`).join('')}</select></div>
       </div>
       <div class="row">
@@ -542,9 +601,13 @@ async function renderApprovals() {
   const regionOptsImp = REGIONS.map(r => `<option value="${r.id}">${esc(r.name)}</option>`).join('');
   importCard.innerHTML = `
     <h3>기존 수강생 일괄 등록 (CSV)</h3>
-    <div class="muted mb8">CSV 헤더: 이름,휴대폰번호,레벨,희망요일,경력,입사시기,MBTI,DISC (순서 무관, 헤더로 자동 인식) · 초기 비밀번호는 휴대폰 뒤 4자리로 자동 설정되며, 승인 절차 없이 바로 로그인 가능한 상태로 등록됩니다.</div>
+    <div class="muted mb8">
+      기존 출석부 CSV(요일, 이름, 입금자명, 지점, 레벨, 과정, 경력, 입사 시기, 기수, DISC, MBTI, 희망 입봉 시기, 특이사항, 주민번호 등)를 그대로 올리시면 됩니다. 헤더 이름으로 자동 인식하므로 컬럼 순서는 상관없습니다.<br/>
+      단, <b>휴대폰번호 컬럼은 꼭 추가</b>해서 올려주세요(로그인 아이디로 사용). "요일" 칸에 <b>"퇴사"</b>가 있으면 자동으로 퇴사 상태로, <b>"이나모리"/"머스크"</b>가 있으면 강사코스 반으로 등록됩니다.<br/>
+      초기 비밀번호는 휴대폰 뒤 4자리로 자동 설정되며, 승인 절차 없이 바로 로그인 가능한 상태로 등록됩니다.
+    </div>
     <div class="row mb8">
-      <a class="btn small ghost" href="data:text/csv;charset=utf-8,%EC%9D%B4%EB%A6%84,%ED%9C%B4%EB%8C%80%ED%8F%B0%EB%B2%88%ED%98%B8,%EB%A0%88%EB%B2%A8,%ED%9D%AC%EB%A7%9D%EC%9A%94%EC%9D%BC,%EA%B2%BD%EB%A0%A5,%EC%9E%85%EC%82%AC%EC%8B%9C%EA%B8%B0,MBTI,DISC%0A%ED%99%8D%EA%B8%B8%EB%8F%99,01012345678,1Lv(%EB%B2%A0%EC%9D%B4%EC%A7%81),%EC%9B%94%2C%EC%88%98,3-6%EA%B0%9C%EC%9B%94%20%EB%AF%B8%EB%A7%8C,2026%EB%85%84%201%EB%B6%84%EA%B8%B0,INFP,D" download="수강생등록양식.csv">CSV 양식 다운로드</a>
+      <button class="btn small ghost" id="downloadTemplateBtn">CSV 양식 다운로드</button>
       <select id="importRegion">${regionOptsImp}</select>
     </div>
     <input type="file" id="csvFile" accept=".csv" />
@@ -553,6 +616,7 @@ async function renderApprovals() {
   `;
   content.appendChild(importCard);
   document.getElementById('csvImportBtn').onclick = handleCsvImport;
+  document.getElementById('downloadTemplateBtn').onclick = downloadCsvTemplate;
 
   const pendCard = document.createElement('div'); pendCard.className = 'card';
   pendCard.innerHTML = `<h3>승인 대기 목록</h3><div id="pendList">불러오는 중...</div>`;
@@ -571,29 +635,77 @@ async function renderApprovals() {
   document.getElementById('showInactive').onclick = () => loadStudentMgmt('inactive');
   loadStudentMgmt('active');
 }
-const CSV_HEADER_MAP = { '이름': 'name', '휴대폰번호': 'phone', '휴대폰': 'phone', '레벨': 'level', '희망요일': 'desiredDays', '수강희망요일': 'desiredDays', '경력': 'career', '입사시기': 'joinPeriod', 'mbti': 'mbti', 'disc': 'disc' };
+// header matching is whitespace/newline-insensitive since source sheets often wrap header text
+// (e.g. "교육비 \n입금 여부" or "희망 \n입봉 시기")
+const CSV_HEADER_MAP = {
+  '요일': 'weekdayRaw',
+  '이름': 'name',
+  '입금자명': 'depositorName',
+  '지점': 'branch',
+  '리더': 'leaderName',
+  '교육비입금여부': 'tuitionPaidRaw',
+  '레벨': 'levelRaw',
+  '과정': 'courseRaw',
+  '경력': 'career',
+  '입사시기': 'joinPeriod',
+  '기수': 'cohort',
+  'disc': 'disc',
+  'mbti': 'mbti',
+  '희망입봉시기': 'debutMonth',
+  '입사': 'joinDate',
+  '퇴사': 'leaveDate',
+  '특이사항': 'notes',
+  '주민번호': 'rrn',
+  '휴대폰번호': 'phone',
+  '휴대폰': 'phone',
+  '전화번호': 'phone',
+  'phone': 'phone'
+};
+function normalizeHeaderKey(h) { return h.replace(/\s+/g, '').toLowerCase(); }
 
+// Full CSV parser: handles quoted fields, embedded commas, and embedded newlines inside quotes
+// (Google Sheets/Excel exports often wrap multi-line header cells in quotes).
 function parseCSV(text) {
-  const lines = text.replace(/\r/g, '').split('\n').filter(l => l.trim().length);
-  if (!lines.length) return [];
-  const splitLine = (line) => {
-    const out = []; let cur = ''; let inQuotes = false;
-    for (let i = 0; i < line.length; i++) {
-      const c = line[i];
-      if (c === '"') { inQuotes = !inQuotes; continue; }
-      if (c === ',' && !inQuotes) { out.push(cur); cur = ''; continue; }
-      cur += c;
+  const clean = text.replace(/\r/g, '');
+  const rows = [];
+  let row = []; let cur = ''; let inQuotes = false;
+  for (let i = 0; i < clean.length; i++) {
+    const c = clean[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (clean[i + 1] === '"') { cur += '"'; i++; } else { inQuotes = false; }
+      } else cur += c;
+      continue;
     }
-    out.push(cur);
-    return out.map(s => s.trim());
-  };
-  const headers = splitLine(lines[0]).map(h => CSV_HEADER_MAP[h.trim()] || CSV_HEADER_MAP[h.trim().toLowerCase()] || h.trim());
-  return lines.slice(1).map(line => {
-    const cells = splitLine(line);
-    const obj = {};
-    headers.forEach((h, i) => { obj[h] = cells[i] || ''; });
-    return obj;
+    if (c === '"') { inQuotes = true; continue; }
+    if (c === ',') { row.push(cur); cur = ''; continue; }
+    if (c === '\n') { row.push(cur); rows.push(row); row = []; cur = ''; continue; }
+    cur += c;
+  }
+  if (cur.length || row.length) { row.push(cur); rows.push(row); }
+  const nonEmptyRows = rows.filter(r => r.some(c => c.trim().length));
+  if (!nonEmptyRows.length) return [];
+  const headers = nonEmptyRows[0].map(h => {
+    const key = normalizeHeaderKey(h);
+    return CSV_HEADER_MAP[key] || CSV_HEADER_MAP[h.trim()] || h.trim();
   });
+  return nonEmptyRows.slice(1).map(cells => {
+    const obj = {};
+    headers.forEach((h, i) => { obj[h] = (cells[i] || '').trim(); });
+    return obj;
+  }).filter(obj => obj.name || obj.phone);
+}
+
+function downloadCsvTemplate() {
+  const headerLine = ['요일', '이름', '입금자명', '지점', '레벨', '경력', '입사 시기', '기수', 'DISC', 'MBTI', '희망 입봉 시기', '주민번호', '휴대폰번호'].join(',');
+  const sample = ['월 화', '홍길동', '홍아빠', '압구정', '비기너,러너', '3-6개월 미만', '2026.1분기', '7월', 'D', 'INFP', '1월', '', '01012345678'].join(',');
+  const csv = '﻿' + headerLine + '\n' + sample + '\n';
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = '수강생등록양식.csv';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 function handleCsvImport() {
@@ -606,8 +718,9 @@ function handleCsvImport() {
     if (!rows.length) return alert('읽을 수 있는 데이터가 없습니다.');
     try {
       const { results } = await api('/students/bulk-import', { method: 'POST', body: JSON.stringify({ students: rows, regionId }) });
-      document.getElementById('importResult').innerHTML = `<table><thead><tr><th>#</th><th>이름</th><th>아이디(휴대폰)</th><th>결과</th></tr></thead><tbody>
-        ${results.map(r => `<tr><td>${r.row}</td><td>${esc(r.name)}</td><td>${esc(r.phone)}</td><td>${r.ok ? `<span class="badge active">등록완료 (초기비번 ${esc(r.tempPassword)})</span>` : `<span class="badge inactive">${esc(r.error)}</span>`}</td></tr>`).join('')}
+      const okCount = results.filter(r => r.ok).length;
+      document.getElementById('importResult').innerHTML = `<div class="mb8">${okCount}/${results.length}건 등록 성공</div><table><thead><tr><th>#</th><th>이름</th><th>아이디(휴대폰)</th><th>레벨/상태</th><th>결과</th></tr></thead><tbody>
+        ${results.map(r => `<tr><td>${r.row}</td><td>${esc(r.name)}</td><td>${esc(r.phone)}</td><td>${r.ok ? `${esc(r.level||'-')} · ${r.status==='inactive'?'<span class="badge inactive">퇴사</span>':'<span class="badge active">수강중</span>'}` : '-'}</td><td>${r.ok ? `<span class="badge active">등록완료 (초기비번 ${esc(r.tempPassword)})</span>` : `<span class="badge inactive">${esc(r.error)}</span>`}</td></tr>`).join('')}
       </tbody></table>`;
     } catch (e) { alert(e.message); }
   };
@@ -650,8 +763,8 @@ async function renderTimetableAdmin() {
       <div class="field" style="flex:1"><label>구분</label><select id="tInternal"><option value="false">아카데미 시간표</option><option value="true">내부일정</option></select></div>
     </div>
     <div class="row">
-      <div class="field" style="flex:1"><label>제목/레벨명</label><input id="tTitle" placeholder="예: 1Lv 베이직" /></div>
-      <div class="field" style="flex:1"><label>레벨 코드(선택)</label><select id="tLevel"><option value="">-</option>${LEVELS.map(l=>`<option value="${l}">${l}</option>`).join('')}</select></div>
+      <div class="field" style="flex:1"><label>제목(화면 표시명)</label><input id="tTitle" placeholder="예: 1레벨 (비기너)" /></div>
+      <div class="field" style="flex:1"><label>레벨 코드 (색상·필터 매칭용)</label><select id="tLevel"><option value="">- (내부일정 등 레벨 없음)</option>${LEVELS.map(l=>`<option value="${l}">${esc(LEVEL_LABELS[l]||l)}</option>`).join('')}</select></div>
     </div>
     <div class="row">
       <div class="field" style="flex:1"><label>요일</label><select id="tWeekday">${WEEKDAYS.map(w=>`<option value="${w}">${w}</option>`).join('')}</select></div>

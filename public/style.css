@@ -60,13 +60,22 @@ th { color: var(--muted); font-weight: 600; background: #fafbfc; }
 .badge.inactive { background: #f0f1f4; color: var(--muted); }
 
 .month-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
-.month-grid .dow { text-align: center; font-size: 12px; color: var(--muted); padding: 4px; }
-.day-cell { border: 1px solid var(--border); border-radius: 8px; min-height: 90px; padding: 6px; background: #fff; font-size: 11px; }
-.day-cell .date-num { font-weight: 700; margin-bottom: 4px; }
-.day-cell.today { border-color: var(--accent); }
-.day-item { background: #eef1ff; border-radius: 6px; padding: 3px 5px; margin-bottom: 3px; cursor: pointer; }
-.day-item.internal { background: #f2effb; }
+.month-grid .dow { text-align: center; font-size: 12px; color: var(--muted); padding: 4px; font-weight: 600; }
+.day-cell { border: 1px solid var(--border); border-radius: 8px; min-height: 128px; padding: 6px; background: #fff; font-size: 11px; display: flex; flex-direction: column; gap: 4px; }
+.day-cell .date-num { font-weight: 700; margin-bottom: 2px; }
+.day-cell.today { border-color: var(--accent); border-width: 2px; }
+.day-cell.weekend-empty { background: #fafbfc; }
+.day-item {
+  border-radius: 6px; padding: 4px 6px; cursor: pointer; line-height: 1.35;
+  border-left: 3px solid var(--level-color, var(--accent)); background: var(--level-bg, #eef1ff);
+}
+.day-item .lv-name { font-weight: 700; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.day-item .lv-meta { display: block; color: var(--muted); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.day-item.internal { border-left-style: dashed; opacity: .85; }
 .day-item.deadline { background: #fdecec; }
+.level-legend { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; font-size: 12px; }
+.level-legend .chip { display: inline-flex; align-items: center; gap: 5px; }
+.level-legend .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
 .month-nav { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
 .month-nav .label { font-weight: 700; font-size: 16px; }
 .check-toggle { display: flex; align-items: center; gap: 6px; font-size: 13px; margin-left: auto; }

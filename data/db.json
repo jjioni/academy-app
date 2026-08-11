@@ -4,33 +4,33 @@
       "id": 1,
       "role": "master",
       "phone": "happynian",
-      "passwordHash": "e6914db880ec3ca0cca38ed6b44c1b98:b3ed62fbd9010ff3604eed37addad4b5c7ea65e6b9d0a8fa8116cedecc802a02936425a77d5ff17195bd5aa22141621c33d583b52028e0cf24d5592e35355597",
+      "passwordHash": "69428336936a7333c711bb24d2a36170:63b548c01d5428307fbd7d51658d6166f18b3a977c12bd1ea6adc531d53d57ccb020c8cd4718a527cd18fe2b5ab5696d8f56d614d7387d40673a27e5de3f2379",
       "name": "마스터",
       "regionId": null,
       "status": "active",
-      "createdAt": "2026-08-07T10:58:44.257Z",
+      "createdAt": "2026-08-07T11:50:11.346Z",
       "profile": {}
     },
     {
       "id": 2,
       "role": "region_rep",
       "phone": "01011111111",
-      "passwordHash": "522b4f13880bd3ea60dd3081d40ba4e5:259b3d154f93bb33a563fbb7bdc07d830b696169b1b2b815c3d8df8c9be0430cf4d908c122f40cdfbac184a843f9fd0c88cfe8cc58e45a5975e7af3dd5ca0718",
+      "passwordHash": "b2f2d62b52744c5362e87469c82b704d:9719bc90c34b3b0bdb885392f14640e5bc8d102853a8e128de95a0b077f3e8b8e970aac8df8a1ef2a03e450cac634f4d38a4b55c44add62ffd3ab67f6d780308",
       "name": "압구정 지역대표",
       "regionId": 1,
       "status": "active",
-      "createdAt": "2026-08-07T10:58:44.282Z",
+      "createdAt": "2026-08-07T11:50:11.374Z",
       "profile": {}
     },
     {
       "id": 3,
       "role": "admin",
       "phone": "01022222222",
-      "passwordHash": "15c43e6247f92a20c36060e94037d7c8:669ec45fbab860d8bf3eff58be3bcf035a787470a8a29ea70a3aceef20af77fb952b5600a295be9ce06624fa2f5ed042fb03468c7face546fa419324b334baa4",
+      "passwordHash": "fc756e4c5773d2b06fcc62096dd66df5:d547a3685b966952c16efcd1305f8f8f04cc102cddcbfe07689a346087d1b541428d7651e4dae499630c236ecdd2a5b010d96d329e19fe0e586667bea7d4d460",
       "name": "압구정 관리자",
       "regionId": 1,
       "status": "active",
-      "createdAt": "2026-08-07T10:58:44.306Z",
+      "createdAt": "2026-08-07T11:50:11.401Z",
       "profile": {}
     }
   ],
@@ -46,94 +46,116 @@
   "timetable_templates": [
     {
       "id": 1,
-      "level": "1Lv(베이직)",
+      "level": "1레벨",
       "weekday": "월",
-      "startTime": "19:00",
-      "endTime": "21:00",
+      "startTime": "11:00",
+      "endTime": "18:00",
       "room": "A",
       "regionId": 1,
       "isInternal": false,
-      "title": "1Lv 베이직"
+      "title": "1레벨 (비기너)"
     },
     {
       "id": 2,
-      "level": "2Lv(베이직)",
-      "weekday": "화",
-      "startTime": "19:00",
-      "endTime": "21:00",
-      "room": "A",
-      "regionId": 1,
-      "isInternal": false,
-      "title": "2Lv 베이직"
-    },
-    {
-      "id": 3,
-      "level": "1Lv(베이직)",
-      "weekday": "수",
-      "startTime": "19:00",
-      "endTime": "21:00",
-      "room": "A",
-      "regionId": 1,
-      "isInternal": false,
-      "title": "1Lv 베이직"
-    },
-    {
-      "id": 4,
-      "level": "2Lv(베이직)",
-      "weekday": "목",
-      "startTime": "19:00",
-      "endTime": "21:00",
-      "room": "A",
-      "regionId": 1,
-      "isInternal": false,
-      "title": "2Lv 베이직"
-    },
-    {
-      "id": 5,
-      "level": "3Lv(우먼)",
+      "level": "3레벨",
       "weekday": "월",
       "startTime": "11:00",
       "endTime": "18:00",
       "room": "B",
       "regionId": 1,
       "isInternal": false,
-      "title": "3Lv 우먼"
+      "title": "3레벨 (챌린저)"
     },
     {
-      "id": 6,
-      "level": "4Lv(맨즈)",
+      "id": 3,
+      "level": "2레벨",
+      "weekday": "화",
+      "startTime": "11:00",
+      "endTime": "18:00",
+      "room": "A",
+      "regionId": 1,
+      "isInternal": false,
+      "title": "2레벨 (러너)"
+    },
+    {
+      "id": 4,
+      "level": "4레벨",
       "weekday": "화",
       "startTime": "11:00",
       "endTime": "18:00",
       "room": "B",
       "regionId": 1,
       "isInternal": false,
-      "title": "4Lv 맨즈"
+      "title": "4레벨 (워너)"
+    },
+    {
+      "id": 5,
+      "level": "강사코스-이나모리",
+      "weekday": "화",
+      "startTime": "10:00",
+      "endTime": "17:00",
+      "room": "C",
+      "regionId": 1,
+      "isInternal": false,
+      "title": "강사코스-이나모리반"
+    },
+    {
+      "id": 6,
+      "level": "1레벨",
+      "weekday": "수",
+      "startTime": "11:00",
+      "endTime": "18:00",
+      "room": "A",
+      "regionId": 1,
+      "isInternal": false,
+      "title": "1레벨 (비기너)"
     },
     {
       "id": 7,
-      "level": "3Lv(우먼)",
+      "level": "3레벨",
       "weekday": "수",
       "startTime": "11:00",
       "endTime": "18:00",
       "room": "B",
       "regionId": 1,
       "isInternal": false,
-      "title": "3Lv 우먼"
+      "title": "3레벨 (챌린저)"
     },
     {
       "id": 8,
-      "level": "4Lv(맨즈)",
+      "level": "강사코스-머스크",
+      "weekday": "수",
+      "startTime": "10:00",
+      "endTime": "17:00",
+      "room": "C",
+      "regionId": 1,
+      "isInternal": false,
+      "title": "강사코스-머스크반"
+    },
+    {
+      "id": 9,
+      "level": "2레벨",
+      "weekday": "목",
+      "startTime": "11:00",
+      "endTime": "18:00",
+      "room": "A",
+      "regionId": 1,
+      "isInternal": false,
+      "title": "2레벨 (러너)"
+    },
+    {
+      "id": 10,
+      "level": "4레벨",
       "weekday": "목",
       "startTime": "11:00",
       "endTime": "18:00",
       "room": "B",
       "regionId": 1,
       "isInternal": false,
-      "title": "4Lv 맨즈"
+      "title": "4레벨 (워너)"
     },
     {
-      "id": 9,
+      "id": 11,
       "level": null,
       "weekday": "월",
       "startTime": "09:00",
@@ -144,7 +166,7 @@
       "title": "리더 줌미팅"
     },
     {
-      "id": 10,
+      "id": 12,
       "level": null,
       "weekday": "화",
       "startTime": "09:00",
@@ -168,7 +190,7 @@
   "_seq": {
     "users": 3,
     "regions": 1,
-    "timetable_templates": 10,
+    "timetable_templates": 12,
     "timetable_instances": 0,
     "attendance": 0,
     "checkin_codes": 0,

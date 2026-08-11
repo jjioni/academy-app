@@ -38,6 +38,35 @@ function canWriteInstructorFeedback(user) {
 function canCreateAssignment(user) {
   return user && ['master', 'region_rep', 'admin', 'instructor'].includes(user.role);
 }
+
+// Levels: 1레벨/2레벨 run as a pair, 3레벨/4레벨 run as a pair, plus two 강사코스 tracks.
+// A student's chosen "pair" (from signup or CSV) expands into individual level codes so
+// timetable/attendance/assignment matching can key off a single level (e.g. "1레벨").
+function expandLevelSelection(raw) {
+  const v = (raw || '').trim();
+  if (v === '1,2' || v.includes('비기너') || v.includes('러너')) return ['1레벨', '2레벨'];
+  if (v === '3,4' || v.includes('챌린저') || v.includes('위너') || v.includes('워너')) return ['3레벨', '4레벨'];
+  if (v.includes('이나모리')) return ['강사코스-이나모리'];
+  if (v.includes('머스크')) return ['강사코스-머스크'];
+  if (v.includes('강사코스')) return ['강사코스'];
+  return v ? [v] : [];
+}
+
+// Notify the region's admin(s) ("매장 리더") that a new signup needs approval.
+function notifyRegionAdminsOfSignup(newUser) {
+  if (!newUser.regionId) return;
+  const admins = db.find('users', u => u.role === 'admin' && u.status === 'active' && String(u.regionId) === String(newUser.regionId));
+  admins.forEach(admin => {
+    db.insert('notifications', {
+      targetUserId: admin.id,
+      type: 'approval_pending',
+      message: `${newUser.name}님이 ${newUser.role === 'student' ? '수강생' : '강사'}으로 가입 신청했습니다. 승인해주세요.`,
+      relatedUserId: newUser.id,
+      read: false,
+      createdAt: new Date().toISOString()
+    });
+  });
+}
 function safeUser(u) {
   if (!u) return null;
   const { passwordHash, ...rest } = u;
@@ -121,13 +150,15 @@ async function handleSignup(body) {
   if (!['student', 'instructor'].includes(role)) return { status: 400, body: { error: '가입 가능한 역할이 아닙니다.' } };
   if (!phone || !password || !name) return { status: 400, body: { error: '필수 정보가 누락되었습니다.' } };
   if (db.findOne('users', u => u.phone === phone)) return { status: 400, body: { error: '이미 등록된 휴대폰 번호입니다.' } };
+  const levels = expandLevelSelection(level);
   const user = db.insert('users', {
     role, phone, passwordHash: hashPassword(password), name,
     regionId: regionId || null,
     status: 'pending', // pending -> active -> inactive(퇴사/숨김)
     createdAt: new Date().toISOString(),
-    profile: { level: level || null, desiredDays: desiredDays || [], mbti: mbti || '', disc: disc || '', career: career || '', joinPeriod: joinPeriod || '', extra: extra || '' }
+    profile: { level: levels[0] || null, levels, desiredDays: desiredDays || [], mbti: mbti || '', disc: disc || '', career: career || '', joinPeriod: joinPeriod || '', extra: extra || '' }
   });
+  notifyRegionAdminsOfSignup(user);
   return { status: 200, body: { user: safeUser(user) } };
 }
 
@@ -183,6 +214,10 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/api/me' && req.method === 'GET') {
       return sendJSON(res, 200, { user: safeUser(user) });
     }
+    // public: needed on the signup page (before login) so users can pick their branch/region
+    if (pathname === '/api/regions' && req.method === 'GET') {
+      return sendJSON(res, 200, { regions: db.all('regions') });
+    }
 
     // everything below requires login
     if (!user) return sendJSON(res, 401, { error: '로그인이 필요합니다.' });
@@ -230,31 +265,45 @@ const server = http.createServer(async (req, res) => {
       const status = query.status || 'active';
       let students = db.find('users', u => u.role === 'student' && u.status === status);
       if (query.regionId) students = students.filter(s => String(s.regionId) === String(query.regionId));
-      if (query.level) students = students.filter(s => s.profile && s.profile.level === query.level);
+      if (query.level) students = students.filter(s => s.profile && ((s.profile.levels || []).includes(query.level) || s.profile.level === query.level));
       return sendJSON(res, 200, { students: students.map(safeUser) });
     }
     if (pathname === '/api/students/bulk-import' && req.method === 'POST') {
       if (!canApprove(user)) return sendJSON(res, 403, { error: '권한이 없습니다.' });
-      const { students, regionId } = body; // students: [{ name, phone, level, desiredDays, career, joinPeriod, mbti, disc }]
+      const { students, regionId } = body; // raw rows straight from CSV headers (see CSV_HEADER_MAP on client)
       if (!Array.isArray(students) || !students.length) return sendJSON(res, 400, { error: '등록할 수강생 목록이 비어있습니다.' });
+      const norm = v => (v || '').replace(/\s*,\s*/g, ',').trim();
       const results = [];
       students.forEach((s, idx) => {
         const name = (s.name || '').trim();
         const phone = (s.phone || '').trim();
-        if (!name || !phone) { results.push({ row: idx + 1, name, phone, ok: false, error: '이름 또는 휴대폰번호 누락' }); return; }
+        const weekdayRaw = (s.weekdayRaw || '').trim();
+        if (!name) { results.push({ row: idx + 1, name, phone, ok: false, error: '이름 누락' }); return; }
+        if (!phone) { results.push({ row: idx + 1, name, phone, ok: false, error: '휴대폰번호(아이디) 누락' }); return; }
         if (db.findOne('users', u => u.phone === phone)) { results.push({ row: idx + 1, name, phone, ok: false, error: '이미 존재하는 아이디(휴대폰번호)' }); return; }
+
+        let status = 'active';
+        let levels;
+        if (weekdayRaw.includes('퇴사')) { status = 'inactive'; levels = expandLevelSelection(norm(s.levelRaw)); }
+        else if (weekdayRaw.includes('이나모리')) levels = ['강사코스-이나모리'];
+        else if (weekdayRaw.includes('머스크')) levels = ['강사코스-머스크'];
+        else levels = expandLevelSelection(norm(s.levelRaw));
+
         const tempPassword = phone.replace(/\D/g, '').slice(-4) || '0000';
         const row = db.insert('users', {
           role: 'student', phone, passwordHash: hashPassword(tempPassword), name,
-          regionId: regionId || null, status: 'active', createdAt: new Date().toISOString(),
+          regionId: regionId || null, status, createdAt: new Date().toISOString(),
           createdBy: user.id,
           profile: {
-            level: s.level || null,
-            desiredDays: (s.desiredDays || '').split(/[,\/\s]+/).filter(Boolean),
-            mbti: s.mbti || '', disc: s.disc || '', career: s.career || '', joinPeriod: s.joinPeriod || '', extra: ''
+            level: levels[0] || null, levels,
+            classDays: weekdayRaw && !weekdayRaw.includes('퇴사') && !weekdayRaw.includes('이나모리') && !weekdayRaw.includes('머스크') ? weekdayRaw : '',
+            career: s.career || '', joinPeriod: s.joinPeriod || '', mbti: (s.mbti || '').trim(), disc: (s.disc || '').trim(),
+            branch: s.branch || '', depositorName: s.depositorName || '', cohort: s.cohort || '',
+            debutMonth: s.debutMonth || '', joinDate: s.joinDate || '', leaveDate: s.leaveDate || '',
+            notes: s.notes || '', rrn: s.rrn || '', desiredDays: []
           }
         });
-        results.push({ row: idx + 1, name, phone, ok: true, tempPassword, id: row.id });
+        results.push({ row: idx + 1, name, phone, level: levels.join(','), status, ok: true, tempPassword, id: row.id });
       });
       return sendJSON(res, 200, { results });
     }
@@ -265,9 +314,6 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ---------- REGIONS ----------
-    if (pathname === '/api/regions' && req.method === 'GET') {
-      return sendJSON(res, 200, { regions: db.all('regions') });
-    }
     if (pathname === '/api/regions' && req.method === 'POST') {
       if (user.role !== 'master') return sendJSON(res, 403, { error: '마스터만 지역을 추가할 수 있습니다.' });
       const { name, lat, lng, address } = body;
@@ -378,7 +424,7 @@ const server = http.createServer(async (req, res) => {
       const STATUSES = ['출석', '보강', '지각', '조퇴', '병결', '행사', '결석'];
       let students = db.find('users', u => u.role === 'student' && u.status === 'active');
       if (query.regionId) students = students.filter(s => String(s.regionId) === String(query.regionId));
-      if (query.level) students = students.filter(s => s.profile && s.profile.level === query.level);
+      if (query.level) students = students.filter(s => s.profile && ((s.profile.levels || []).includes(query.level) || s.profile.level === query.level));
       if (query.studentId) students = students.filter(s => String(s.id) === String(query.studentId));
       const allAttendance = db.all('attendance');
       const stats = students.map(s => {
@@ -448,7 +494,12 @@ const server = http.createServer(async (req, res) => {
     }
     if (pathname === '/api/assignments' && req.method === 'GET') {
       let rows = db.all('assignments');
-      if (query.level) rows = rows.filter(a => !a.level || a.level === query.level);
+      if (user.role === 'student') {
+        const myLevels = (user.profile && user.profile.levels) || [];
+        rows = rows.filter(a => !a.level || myLevels.includes(a.level));
+      } else if (query.level) {
+        rows = rows.filter(a => !a.level || a.level === query.level);
+      }
       if (query.weekday) rows = rows.filter(a => !a.weekday || a.weekday === query.weekday);
       if (query.regionId) rows = rows.filter(a => !a.regionId || String(a.regionId) === String(query.regionId));
       const subs = db.all('assignment_submissions');
@@ -486,12 +537,23 @@ const server = http.createServer(async (req, res) => {
       else row = db.insert('assignment_submissions', Object.assign({ assignmentId, studentId: user.id }, payload));
       return sendJSON(res, 200, { submission: row });
     }
+    if (pathname === '/api/notifications/mine' && req.method === 'GET') {
+      const rows = db.find('notifications', n => n.targetUserId === user.id && !n.read)
+        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      return sendJSON(res, 200, { notifications: rows });
+    }
+    if (pathname.match(/^\/api\/notifications\/\d+\/read$/) && req.method === 'POST') {
+      const id = pathname.split('/')[3];
+      const n = db.getById('notifications', id);
+      if (n && n.targetUserId === user.id) db.update('notifications', id, { read: true });
+      return sendJSON(res, 200, { ok: true });
+    }
     if (pathname === '/api/notifications/assignments' && req.method === 'GET') {
       // D-1 / D-2 reminders relevant to current user
       const rows = db.all('assignments');
       const today = new Date(todayStr());
       const relevant = rows.filter(a => {
-        if (user.role === 'student' && a.level && user.profile && a.level !== user.profile.level) return false;
+        if (user.role === 'student' && a.level && !((user.profile && user.profile.levels) || []).includes(a.level)) return false;
         const dl = new Date(a.deadline);
         const diffDays = Math.round((dl - today) / (1000 * 60 * 60 * 24));
         return diffDays === 1 || diffDays === 2 || diffDays === 0;

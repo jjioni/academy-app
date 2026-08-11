@@ -34,16 +34,17 @@
         </select>
       </div>
       <div class="field"><label>이름</label><input name="name" required /></div>
+      <div class="field"><label>지점</label><select name="regionId" id="signupRegion"></select></div>
       <div class="field"><label>휴대폰번호</label><input name="phone" placeholder="01012345678" required /></div>
       <div class="field"><label>비밀번호</label><input name="password" type="password" required /></div>
 
       <div id="studentFields">
         <div class="field"><label>수강 희망 레벨</label>
           <select name="level">
-            <option value="1Lv(베이직)">1Lv 베이직</option>
-            <option value="2Lv(베이직)">2Lv 베이직</option>
-            <option value="3Lv(우먼)">3Lv 우먼</option>
-            <option value="4Lv(맨즈)">4Lv 맨즈</option>
+            <option value="비기너,러너">비기너, 러너</option>
+            <option value="챌린저,위너">챌린저, 위너</option>
+            <option value="강사코스-이나모리">강사코스-이나모리</option>
+            <option value="강사코스-머스크">강사코스-머스크</option>
           </select>
         </div>
         <div class="field"><label>수강 희망 요일 (쉼표로 구분, 예: 월,수)</label><input name="desiredDays" /></div>
@@ -99,7 +100,7 @@ document.getElementById('signupForm').onsubmit = async (e) => {
   e.preventDefault();
   const fd = Object.fromEntries(new FormData(e.target));
   const body = {
-    role: fd.role, name: fd.name, phone: fd.phone, password: fd.password,
+    role: fd.role, name: fd.name, phone: fd.phone, password: fd.password, regionId: fd.regionId,
     level: fd.level, desiredDays: (fd.desiredDays || '').split(',').map(s => s.trim()).filter(Boolean),
     career: fd.career, joinPeriod: fd.joinPeriod, mbti: fd.mbti, disc: fd.disc,
     extra: fd.role === 'instructor' ? JSON.stringify({ phone2: fd.phone2, rrn: fd.rrn }) : ''
@@ -113,6 +114,12 @@ document.getElementById('signupForm').onsubmit = async (e) => {
 
 // if already logged in, go straight to dashboard
 fetch('/api/me').then(r => r.json()).then(d => { if (d.user) location.href = '/dashboard.html'; });
+
+// populate region select (needs a plain fetch since /api/regions doesn't require login)
+fetch('/api/regions').then(r => r.json()).then(d => {
+  const sel = document.getElementById('signupRegion');
+  sel.innerHTML = (d.regions || []).map(r => `<option value="${r.id}">${r.name}</option>`).join('');
+}).catch(() => {});
 </script>
 </body>
 </html>
