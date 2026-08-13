@@ -25,6 +25,27 @@ let ME = null;
 let REGIONS = [];
 const WEEKDAYS = ['일','월','화','수','목','금','토'];
 const STATUSES = ['출석','보강','지각','조퇴','병결','행사','결석'];
+
+// canonical daily time blocks — 9-10 내부미팅(월,화만), 10-11 1교시, 11-14 2교시,
+// 14-15 점심시간, 15-18 3교시. Used to auto-fill the template form and to label
+// class time ranges on the calendar with period numbers instead of raw clock times.
+const PERIOD_BLOCKS = [
+  { key: 'zoom', label: '내부미팅', start: '09:00', end: '10:00', weekdaysOnly: ['월', '화'] },
+  { key: '1', label: '1교시', start: '10:00', end: '11:00' },
+  { key: '2', label: '2교시', start: '11:00', end: '14:00' },
+  { key: 'lunch', label: '점심시간', start: '14:00', end: '15:00' },
+  { key: '3', label: '3교시', start: '15:00', end: '18:00' }
+];
+function timeToMin(t) { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + m; }
+function periodsCoveredLabel(startTime, endTime) {
+  const s = timeToMin(startTime), e = timeToMin(endTime);
+  if (s === null || e === null) return '';
+  const teaching = PERIOD_BLOCKS.filter(b => b.key === '1' || b.key === '2' || b.key === '3');
+  const covered = teaching.filter(b => s < timeToMin(b.end) && e > timeToMin(b.start)).map(b => b.key);
+  if (!covered.length) return `${startTime}-${endTime}`;
+  if (covered.length === 1) return `${covered[0]}교시`;
+  return `${covered[0]}~${covered[covered.length - 1]}교시`;
+}
 // individual level codes (1레벨/2레벨 run as a pair, 3레벨/4레벨 run as a pair; students enrolled
 // in a pair have both codes in profile.levels, so filtering by a single level still matches them)
 const LEVELS = ['1레벨','2레벨','3레벨','4레벨','강사코스-이나모리','강사코스-머스크'];
@@ -122,17 +143,17 @@ async function markNotifsRead(ids) {
 // ===================== 시간표 =====================
 let ttState = { year: new Date().getFullYear(), month: new Date().getMonth() + 1, showInternal: false, regionId: REGIONS[0] ? REGIONS[0].id : '' };
 
-// fixed brand colors per level (same pastel-bg / saturated-text tone across all five)
+// C안: 화이트 카드 + 컬러 탭. border = 탭 색(중간 채도), text = 레벨명 글씨색(진한 마카롱 톤)
 const LEVEL_COLOR_MAP = {
-  '1레벨': { bg: '#FCE7F3', text: '#DB2777' },            // 핑크
-  '2레벨': { bg: '#FEF9C3', text: '#B45309' },            // 연노랑
-  '3레벨': { bg: '#D1FAE5', text: '#059669' },            // 민트
-  '4레벨': { bg: '#DBEAFE', text: '#2563EB' },            // 하늘
-  '강사코스-이나모리': { bg: '#EDE9FE', text: '#7C3AED' }, // 연보라
-  '강사코스-머스크': { bg: '#EDE9FE', text: '#7C3AED' },   // 연보라
-  '강사코스': { bg: '#EDE9FE', text: '#7C3AED' }           // 연보라 (그룹 미상 강사코스)
+  '1레벨': { border: '#E48CA6', text: '#9C3B57' },                 // 핑크
+  '2레벨': { border: '#D9C15C', text: '#8A6E10' },                 // 연노랑
+  '3레벨': { border: '#8FC161', text: '#4F7A2A' },                 // 연두
+  '4레벨': { border: '#6FAAD6', text: '#2B5A82' },                 // 하늘
+  '강사코스-이나모리': { border: '#A886D1', text: '#6B3FA0' },      // 연보라
+  '강사코스-머스크': { border: '#A886D1', text: '#6B3FA0' },        // 연보라
+  '강사코스': { border: '#A886D1', text: '#6B3FA0' }                // 연보라 (그룹 미상 강사코스)
 };
-const DEFAULT_ITEM_COLOR = { bg: '#eef1ff', text: '#3b6ef6' };
+const DEFAULT_ITEM_COLOR = { border: '#3b6ef6', text: '#3b6ef6' };
 function colorForLevel(levelKey, titleKey) {
   return LEVEL_COLOR_MAP[levelKey] || LEVEL_COLOR_MAP[titleKey] || DEFAULT_ITEM_COLOR;
 }
@@ -180,19 +201,30 @@ async function renderTimetable() {
   }).join('') || '<span class="muted">등록된 수업 없음</span>';
 
   const cellsHtml = days.map(d => {
-    const sorted = [...d.items].sort((a, b) => (a.startTime || '').localeCompare(b.startTime || ''));
+    // insert a fixed, non-clickable lunch marker (14:00-15:00) whenever there's at least
+    // one real class that day, so the daily block structure (교시/점심) reads at a glance
+    const withLunch = d.items.length
+      ? [...d.items, { isLunchMarker: true, startTime: '14:00' }]
+      : d.items;
+    const sorted = withLunch.sort((a, b) => (a.startTime || '').localeCompare(b.startTime || ''));
     const items = sorted.map(it => {
+      if (it.isLunchMarker) {
+        return `<div class="day-item lunch-marker">점심시간 <span class="lv-meta">14:00–15:00</span></div>`;
+      }
       const cls = it.isInternal ? 'internal' : '';
       const label = LEVEL_LABELS[it.level] || it.title || it.level || '';
       const c = colorForLevel(it.level, it.title);
-      const style = `--level-bg:${c.bg};--level-color:${c.text};color:${c.text}`;
-      const meta = [it.startTime, it.room].filter(Boolean).join(' · ');
-      return `<div class="day-item ${cls}" style="${style}" title="${esc(label)} ${esc(it.startTime||'')}-${esc(it.endTime||'')} ${esc(it.room||'')}" onclick="openAttendanceFor('${it.instanceKey}','${d.date}')">
-        <span class="lv-name">${esc(label)}</span><span class="lv-meta">${esc(meta)}</span>
+      const style = `--level-border:${c.border};--level-text:${c.text}`;
+      const periodLabel = it.isInternal ? `${it.startTime||''}-${it.endTime||''}` : periodsCoveredLabel(it.startTime, it.endTime);
+      const meta = [periodLabel, it.room].filter(Boolean).join(' · ');
+      const teacherLine = it.instructorName ? `<span class="lv-teacher">👤 ${esc(it.instructorName)}</span>` : '';
+      const subjectLine = it.subject ? `<span class="lv-subject">${esc(it.subject)}</span>` : '';
+      return `<div class="day-item ${cls}" style="${style}" title="${esc(label)} ${esc(it.subject||'')} ${esc(it.instructorName||'')} ${esc(it.startTime||'')}-${esc(it.endTime||'')} ${esc(it.room||'')}" onclick="openAttendanceFor('${it.instanceKey}','${d.date}')">
+        <span class="lv-name">${esc(label)}</span>${subjectLine}${teacherLine}<span class="lv-meta">${esc(meta)}</span>
       </div>`;
     }).join('');
     const isWeekend = d.weekday === '금' || d.weekday === '토' || d.weekday === '일';
-    return `<div class="day-cell ${d.date===todayStr?'today':''} ${isWeekend && !sorted.length?'weekend-empty':''}"><div class="date-num">${Number(d.date.slice(8,10))}</div>${items}</div>`;
+    return `<div class="day-cell ${d.date===todayStr?'today':''} ${isWeekend && !d.items.length?'weekend-empty':''}"><div class="date-num">${Number(d.date.slice(8,10))}</div>${items}</div>`;
   }).join('');
   grid.innerHTML = dowHtml + blanks + cellsHtml;
 }
@@ -244,7 +276,7 @@ async function loadAttBody(allItems) {
       <span id="codeDisplay"></span>
     </div>
     <table>
-      <thead><tr><th>수강생</th>${periods.map(p => `<th>${p}교시</th>`).join('')}<th>수업 후 피드백</th></tr></thead>
+      <thead><tr><th>수강생</th>${periods.map(p => `<th>${p}교시<br><span class="muted" style="font-weight:400">${esc((PERIOD_BLOCKS.find(b=>b.key===String(p))||{}).start||'')}-${esc((PERIOD_BLOCKS.find(b=>b.key===String(p))||{}).end||'')}</span></th>`).join('')}<th>수업 후 피드백</th></tr></thead>
       <tbody>
         ${students.map(s => `
           <tr>
@@ -622,8 +654,15 @@ async function renderApprovals() {
   pendCard.innerHTML = `<h3>승인 대기 목록</h3><div id="pendList">불러오는 중...</div>`;
   content.appendChild(pendCard);
   const { users } = await api('/pending-users');
-  document.getElementById('pendList').innerHTML = users.length ? `<table><thead><tr><th>이름</th><th>역할</th><th>휴대폰</th><th>프로필</th><th></th></tr></thead><tbody>
-    ${users.map(u => `<tr><td>${esc(u.name)}</td><td>${ROLE_LABEL[u.role]}</td><td>${esc(u.phone)}</td><td>${esc(JSON.stringify(u.profile||{}))}</td><td><button class="btn small primary" onclick="approveUser(${u.id})">승인</button></td></tr>`).join('')}
+  document.getElementById('pendList').innerHTML = users.length ? `<table><thead><tr><th>이름</th><th>역할</th><th>휴대폰</th><th>레벨/경력</th><th>제출 서류</th><th></th></tr></thead><tbody>
+    ${users.map(u => {
+      const p = u.profile || {};
+      const docs = [
+        p.idCardUrl ? `<a href="${esc(p.idCardUrl)}" target="_blank">신분증</a>` : '<span class="muted">신분증 없음</span>',
+        p.bankbookUrl ? `<a href="${esc(p.bankbookUrl)}" target="_blank">통장사본</a>` : '<span class="muted">통장사본 없음</span>'
+      ].join(' · ');
+      return `<tr><td>${esc(u.name)}</td><td>${ROLE_LABEL[u.role]}</td><td>${esc(u.phone)}</td><td>${esc((p.levels||[]).join(',')||p.level||'-')} / ${esc(p.career||'-')}</td><td>${docs}</td><td><button class="btn small primary" onclick="approveUser(${u.id})">승인</button></td></tr>`;
+    }).join('')}
   </tbody></table>` : '<div class="muted">승인 대기 없음</div>';
 
   const listCard = document.createElement('div'); listCard.className = 'card';
@@ -756,6 +795,8 @@ async function renderTimetableAdmin() {
   content.innerHTML = `<div class="page-title">시간표 관리</div><div class="page-sub">기본틀 등록 → 매달 자동 생성</div>`;
   const card = document.createElement('div'); card.className = 'card';
   const regionOpts = REGIONS.map(r => `<option value="${r.id}">${esc(r.name)}</option>`).join('');
+  const { staff } = await api('/staff');
+  const instructorOpts = staff.map(s => `<option value="${s.id}">${esc(s.name)} (${ROLE_LABEL[s.role]})</option>`).join('');
   card.innerHTML = `
     <h3>기본틀 등록</h3>
     <div class="row">
@@ -767,19 +808,38 @@ async function renderTimetableAdmin() {
       <div class="field" style="flex:1"><label>레벨 코드 (색상·필터 매칭용)</label><select id="tLevel"><option value="">- (내부일정 등 레벨 없음)</option>${LEVELS.map(l=>`<option value="${l}">${esc(LEVEL_LABELS[l]||l)}</option>`).join('')}</select></div>
     </div>
     <div class="row">
+      <div class="field" style="flex:1"><label>과목</label><input id="tSubject" placeholder="예: 펌 이론" /></div>
+      <div class="field" style="flex:1"><label>강사</label><select id="tInstructor"><option value="">- 미지정</option>${instructorOpts}</select></div>
+    </div>
+    <div class="row">
       <div class="field" style="flex:1"><label>요일</label><select id="tWeekday">${WEEKDAYS.map(w=>`<option value="${w}">${w}</option>`).join('')}</select></div>
-      <div class="field" style="flex:1"><label>시작</label><input id="tStart" type="time" value="19:00" /></div>
-      <div class="field" style="flex:1"><label>종료</label><input id="tEnd" type="time" value="21:00" /></div>
+      <div class="field" style="flex:1"><label>시작</label><input id="tStart" type="time" value="10:00" /></div>
+      <div class="field" style="flex:1"><label>종료</label><input id="tEnd" type="time" value="18:00" /></div>
       <div class="field" style="flex:1"><label>룸</label><input id="tRoom" placeholder="A" /></div>
+    </div>
+    <div class="row mb8">
+      <span class="muted" style="font-size:12px; align-self:center;">빠른 적용:</span>
+      <button type="button" class="btn small ghost" id="presetFull">1~3교시 (10:00-18:00)</button>
+      <button type="button" class="btn small ghost" id="preset1">1교시만 (10:00-11:00)</button>
+      <button type="button" class="btn small ghost" id="preset2">2교시만 (11:00-14:00)</button>
+      <button type="button" class="btn small ghost" id="preset3">3교시만 (15:00-18:00)</button>
+      <button type="button" class="btn small ghost" id="presetZoom">내부미팅 (09:00-10:00)</button>
     </div>
     <button class="btn primary" id="addTemplate">등록</button>
     <div id="templateList" class="mt16"></div>
   `;
   content.appendChild(card);
+  const applyPreset = (start, end) => { document.getElementById('tStart').value = start; document.getElementById('tEnd').value = end; };
+  document.getElementById('presetFull').onclick = () => applyPreset('10:00', '18:00');
+  document.getElementById('preset1').onclick = () => applyPreset('10:00', '11:00');
+  document.getElementById('preset2').onclick = () => applyPreset('11:00', '14:00');
+  document.getElementById('preset3').onclick = () => applyPreset('15:00', '18:00');
+  document.getElementById('presetZoom').onclick = () => applyPreset('09:00', '10:00');
   document.getElementById('addTemplate').onclick = async () => {
     const body = {
       regionId: document.getElementById('tRegion').value, isInternal: document.getElementById('tInternal').value === 'true',
       title: document.getElementById('tTitle').value, level: document.getElementById('tLevel').value || null,
+      subject: document.getElementById('tSubject').value, instructorId: document.getElementById('tInstructor').value || null,
       weekday: document.getElementById('tWeekday').value, startTime: document.getElementById('tStart').value,
       endTime: document.getElementById('tEnd').value, room: document.getElementById('tRoom').value
     };
@@ -787,8 +847,9 @@ async function renderTimetableAdmin() {
     renderTimetableAdmin();
   };
   const { templates } = await api('/timetable/template');
-  document.getElementById('templateList').innerHTML = templates.length ? `<table><thead><tr><th>구분</th><th>제목</th><th>요일</th><th>시간</th><th>룸</th><th></th></tr></thead><tbody>
-    ${templates.map(t => `<tr><td>${t.isInternal?'<span class="badge internal">내부</span>':'아카데미'}</td><td>${esc(t.title)}</td><td>${t.weekday}</td><td>${esc(t.startTime)}-${esc(t.endTime)}</td><td>${esc(t.room||'')}</td><td><button class="btn small danger" onclick="deleteTemplate(${t.id})">삭제</button></td></tr>`).join('')}
+  const staffById = Object.fromEntries(staff.map(s => [s.id, s.name]));
+  document.getElementById('templateList').innerHTML = templates.length ? `<table><thead><tr><th>구분</th><th>제목</th><th>과목</th><th>강사</th><th>요일</th><th>시간</th><th>룸</th><th></th></tr></thead><tbody>
+    ${templates.map(t => `<tr><td>${t.isInternal?'<span class="badge internal">내부</span>':'아카데미'}</td><td>${esc(t.title)}</td><td>${esc(t.subject||'-')}</td><td>${esc(staffById[t.instructorId]||'-')}</td><td>${t.weekday}</td><td>${esc(t.startTime)}-${esc(t.endTime)}</td><td>${esc(t.room||'')}</td><td><button class="btn small danger" onclick="deleteTemplate(${t.id})">삭제</button></td></tr>`).join('')}
   </tbody></table>` : '<div class="muted">등록된 기본틀 없음</div>';
 }
 async function deleteTemplate(id) {

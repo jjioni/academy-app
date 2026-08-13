@@ -7,6 +7,7 @@ const crypto = require('crypto');
 const db = require('./lib/db');
 const { hashPassword, verifyPassword, randomToken, randomCode } = require('./lib/auth');
 const { distanceMeters, todayStr, weekdayKo, daysInMonth } = require('./lib/util');
+const google = require('./lib/google');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -145,20 +146,50 @@ function streamFile(res, filePath) {
 
 // ================= ROUTE HANDLERS =================
 
+// uploads a signup document (ID card / bankbook photo) to Drive, named "{이름}_{문서종류}_{yyyymmdd}.{ext}".
+// Returns a Drive view link, or null if not attached / Google isn't configured / upload fails
+// (document upload is best-effort — it must never block account creation).
+async function uploadSignupDoc(name, docLabel, file) {
+  if (!file || !file.data) return null;
+  try {
+    const ext = (file.fileName && file.fileName.includes('.')) ? file.fileName.split('.').pop() : 'jpg';
+    const fileName = `${name}_${docLabel}_${todayStr().replace(/-/g, '')}.${ext}`;
+    const result = await google.uploadToDrive(fileName, file.mimeType || 'image/jpeg', file.data);
+    return result ? result.webViewLink : null;
+  } catch (e) {
+    console.error(`Drive upload failed (${docLabel}):`, e.message);
+    return null;
+  }
+}
+
 async function handleSignup(body) {
-  const { role, phone, password, name, level, desiredDays, mbti, disc, career, joinPeriod, regionId, extra } = body;
+  const { role, phone, password, name, level, desiredDays, mbti, disc, career, joinPeriod, regionId, extra, idCardPhoto, bankbookPhoto } = body;
   if (!['student', 'instructor'].includes(role)) return { status: 400, body: { error: '가입 가능한 역할이 아닙니다.' } };
   if (!phone || !password || !name) return { status: 400, body: { error: '필수 정보가 누락되었습니다.' } };
   if (db.findOne('users', u => u.phone === phone)) return { status: 400, body: { error: '이미 등록된 휴대폰 번호입니다.' } };
   const levels = expandLevelSelection(level);
+
+  const [idCardUrl, bankbookUrl] = await Promise.all([
+    uploadSignupDoc(name, '신분증', idCardPhoto),
+    uploadSignupDoc(name, '통장사본', bankbookPhoto)
+  ]);
+
   const user = db.insert('users', {
     role, phone, passwordHash: hashPassword(password), name,
     regionId: regionId || null,
     status: 'pending', // pending -> active -> inactive(퇴사/숨김)
     createdAt: new Date().toISOString(),
-    profile: { level: levels[0] || null, levels, desiredDays: desiredDays || [], mbti: mbti || '', disc: disc || '', career: career || '', joinPeriod: joinPeriod || '', extra: extra || '' }
+    profile: {
+      level: levels[0] || null, levels, desiredDays: desiredDays || [], mbti: mbti || '', disc: disc || '',
+      career: career || '', joinPeriod: joinPeriod || '', extra: extra || '', idCardUrl, bankbookUrl
+    }
   });
   notifyRegionAdminsOfSignup(user);
+  const region = regionId ? db.getById('regions', regionId) : null;
+  google.appendSheetRow(role === 'student' ? '앱_수강생' : '앱_강사', [
+    new Date().toISOString(), name, phone, (region ? region.name : ''),
+    levels.join(','), career || '', idCardUrl || '', bankbookUrl || ''
+  ]).catch(e => console.error('Sheet sync failed (signup):', e.message));
   return { status: 200, body: { user: safeUser(user) } };
 }
 
@@ -329,8 +360,11 @@ const server = http.createServer(async (req, res) => {
     }
     if (pathname === '/api/timetable/template' && req.method === 'POST') {
       if (!canEditTimetable(user)) return sendJSON(res, 403, { error: '권한이 없습니다.' });
-      const { level, weekday, startTime, endTime, room, regionId, isInternal, title } = body;
-      const row = db.insert('timetable_templates', { level, weekday, startTime, endTime, room, regionId, isInternal: !!isInternal, title: title || '' });
+      const { level, weekday, startTime, endTime, room, regionId, isInternal, title, subject, instructorId } = body;
+      const row = db.insert('timetable_templates', {
+        level, weekday, startTime, endTime, room, regionId, isInternal: !!isInternal,
+        title: title || '', subject: subject || '', instructorId: instructorId || null
+      });
       return sendJSON(res, 200, { template: row });
     }
     if (pathname.match(/^\/api\/timetable\/template\/\d+$/) && req.method === 'DELETE') {
@@ -358,7 +392,10 @@ const server = http.createServer(async (req, res) => {
         const items = dayTemplates.map(t => {
           const ov = overrides.find(o => o.templateId === t.id && o.date === dateStr);
           if (ov && ov.cancelled) return null;
-          return Object.assign({}, t, ov ? ov.patch : {}, { date: dateStr, templateId: t.id, instanceKey: `${t.id}_${dateStr}` });
+          const merged = Object.assign({}, t, ov ? ov.patch : {}, { date: dateStr, templateId: t.id, instanceKey: `${t.id}_${dateStr}` });
+          const instructor = merged.instructorId ? db.getById('users', merged.instructorId) : null;
+          merged.instructorName = instructor ? instructor.name : '';
+          return merged;
         }).filter(Boolean);
         days.push({ date: dateStr, weekday: wd, items });
       }
@@ -389,6 +426,10 @@ const server = http.createServer(async (req, res) => {
       let row;
       if (existing) row = db.update('attendance', existing.id, { status, checkedBy: user.id, checkedAt: new Date().toISOString(), method: 'manual' });
       else row = db.insert('attendance', { instanceKey, period, studentId, status, checkedBy: user.id, checkedAt: new Date().toISOString(), method: 'manual' });
+      const student = db.getById('users', studentId);
+      google.appendSheetRow('앱_출석', [
+        new Date().toISOString(), (student ? student.name : studentId), instanceKey, period, status, user.name
+      ]).catch(e => console.error('Sheet sync failed (attendance):', e.message));
       return sendJSON(res, 200, { attendance: row });
     }
     // rotating check-in code (QR substitute; encode as a QR image client-side pointing to a URL with this code)
@@ -576,6 +617,11 @@ const server = http.createServer(async (req, res) => {
         studentId, depositorName, amount, isDeferred: !!isDeferred,
         installments: insts, createdBy: user.id, createdAt: new Date().toISOString()
       });
+      const student = db.getById('users', studentId);
+      google.appendSheetRow('앱_결제', [
+        new Date().toISOString(), (student ? student.name : studentId), depositorName, amount,
+        isDeferred ? '후불' : '', insts.length, user.name
+      ]).catch(e => console.error('Sheet sync failed (payment):', e.message));
       return sendJSON(res, 200, { payment: row });
     }
     if (pathname === '/api/payments' && req.method === 'GET') {

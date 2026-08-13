@@ -58,6 +58,10 @@
         <div class="field"><label>주민등록번호 (현금영수증 발급용, 선택)</label><input name="rrn" placeholder="000000-0000000" /></div>
       </div>
 
+      <div class="field"><label>신분증 사진</label><input type="file" id="idCardFile" accept="image/*" /></div>
+      <div class="field"><label>통장 사본 사진</label><input type="file" id="bankbookFile" accept="image/*" /></div>
+      <div class="muted mt8" style="font-size:12px; margin-bottom:8px;">첨부한 사진은 관리자만 확인할 수 있는 곳에 안전하게 보관됩니다.</div>
+
       <button class="btn primary block" type="submit">회원가입 신청</button>
       <div class="muted mt8" style="font-size:12px">가입 신청 후 관리자 승인이 완료되어야 로그인할 수 있습니다.</div>
     </form>
@@ -96,20 +100,42 @@ document.getElementById('loginForm').onsubmit = async (e) => {
   location.href = '/dashboard.html';
 };
 
+function readFileAsPhoto(fileEl) {
+  return new Promise((resolve) => {
+    const file = fileEl.files[0];
+    if (!file) return resolve(null);
+    const reader = new FileReader();
+    reader.onload = () => resolve({ fileName: file.name, mimeType: file.type, data: reader.result.split(',')[1] });
+    reader.onerror = () => resolve(null);
+    reader.readAsDataURL(file);
+  });
+}
+
 document.getElementById('signupForm').onsubmit = async (e) => {
   e.preventDefault();
   const fd = Object.fromEntries(new FormData(e.target));
-  const body = {
-    role: fd.role, name: fd.name, phone: fd.phone, password: fd.password, regionId: fd.regionId,
-    level: fd.level, desiredDays: (fd.desiredDays || '').split(',').map(s => s.trim()).filter(Boolean),
-    career: fd.career, joinPeriod: fd.joinPeriod, mbti: fd.mbti, disc: fd.disc,
-    extra: fd.role === 'instructor' ? JSON.stringify({ phone2: fd.phone2, rrn: fd.rrn }) : ''
-  };
-  const res = await fetch('/api/signup', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
-  const data = await res.json();
-  if (!res.ok) return showMsg(data.error || '가입 실패', 'error');
-  showMsg('가입 신청 완료! 관리자 승인 후 로그인할 수 있습니다.', 'ok');
-  e.target.reset();
+  const submitBtn = e.target.querySelector('button[type=submit]');
+  submitBtn.disabled = true; submitBtn.textContent = '업로드 중...';
+  try {
+    const [idCardPhoto, bankbookPhoto] = await Promise.all([
+      readFileAsPhoto(document.getElementById('idCardFile')),
+      readFileAsPhoto(document.getElementById('bankbookFile'))
+    ]);
+    const body = {
+      role: fd.role, name: fd.name, phone: fd.phone, password: fd.password, regionId: fd.regionId,
+      level: fd.level, desiredDays: (fd.desiredDays || '').split(',').map(s => s.trim()).filter(Boolean),
+      career: fd.career, joinPeriod: fd.joinPeriod, mbti: fd.mbti, disc: fd.disc,
+      extra: fd.role === 'instructor' ? JSON.stringify({ phone2: fd.phone2, rrn: fd.rrn }) : '',
+      idCardPhoto, bankbookPhoto
+    };
+    const res = await fetch('/api/signup', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    const data = await res.json();
+    if (!res.ok) return showMsg(data.error || '가입 실패', 'error');
+    showMsg('가입 신청 완료! 관리자 승인 후 로그인할 수 있습니다.', 'ok');
+    e.target.reset();
+  } finally {
+    submitBtn.disabled = false; submitBtn.textContent = '회원가입 신청';
+  }
 };
 
 // if already logged in, go straight to dashboard

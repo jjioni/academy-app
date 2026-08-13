@@ -40,7 +40,7 @@ input, select, textarea, button { font-family: inherit; font-size: 14px; }
 .sidebar nav a { display: block; padding: 10px 12px; border-radius: 8px; font-size: 14px; color: #cfd6e6; margin-bottom: 2px; }
 .sidebar nav a.active, .sidebar nav a:hover { background: rgba(255,255,255,.12); color: #fff; }
 .sidebar .logout { margin-top: 24px; }
-.main { flex: 1; padding: 26px 32px; max-width: 1200px; }
+.main { flex: 1; padding: 26px 32px; max-width: 1500px; }
 .page-title { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
 .page-sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
 
@@ -59,20 +59,27 @@ th { color: var(--muted); font-weight: 600; background: #fafbfc; }
 .badge.active { background: #e9f9f0; color: var(--ok); }
 .badge.inactive { background: #f0f1f4; color: var(--muted); }
 
-.month-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
-.month-grid .dow { text-align: center; font-size: 12px; color: var(--muted); padding: 4px; font-weight: 600; }
-.day-cell { border: 1px solid var(--border); border-radius: 8px; min-height: 128px; padding: 6px; background: #fff; font-size: 11px; display: flex; flex-direction: column; gap: 4px; }
-.day-cell .date-num { font-weight: 700; margin-bottom: 2px; }
+.month-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; }
+.month-grid .dow { text-align: center; font-size: 13px; color: var(--muted); padding: 6px; font-weight: 700; }
+.day-cell { border: 1px solid var(--border); border-radius: 10px; min-height: 210px; padding: 8px; background: #fff; font-size: 12px; display: flex; flex-direction: column; gap: 5px; }
+.day-cell .date-num { font-weight: 700; margin-bottom: 2px; font-size: 13px; }
 .day-cell.today { border-color: var(--accent); border-width: 2px; }
 .day-cell.weekend-empty { background: #fafbfc; }
 .day-item {
-  border-radius: 6px; padding: 4px 6px; cursor: pointer; line-height: 1.35;
-  border-left: 3px solid var(--level-color, var(--accent)); background: var(--level-bg, #eef1ff);
+  border-radius: 8px; padding: 6px 8px; cursor: pointer; line-height: 1.4;
+  background: #fff; border: 1px solid var(--border); border-left: 4px solid var(--level-border, var(--accent));
 }
-.day-item .lv-name { font-weight: 700; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.day-item .lv-meta { display: block; color: var(--muted); font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.day-item.internal { border-left-style: dashed; opacity: .85; }
+.day-item .lv-name { font-weight: 800; display: block; font-size: 13px; color: var(--level-text, var(--text)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.day-item .lv-subject { display: block; font-size: 11.5px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.day-item .lv-meta { display: block; color: var(--muted); font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.day-item .lv-teacher { display: block; font-size: 11px; font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.day-item.internal { border-left-style: dashed; opacity: .85; background: #fafbfc; }
 .day-item.deadline { background: #fdecec; }
+.day-item.lunch-marker {
+  cursor: default; background: transparent; border: none; border-left: none; border-top: 1px dashed var(--border);
+  border-radius: 0; padding: 3px 2px 0; font-size: 10.5px; font-weight: 600; color: var(--muted);
+  display: flex; justify-content: space-between; align-items: center;
+}
 .level-legend { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; font-size: 12px; }
 .level-legend .chip { display: inline-flex; align-items: center; gap: 5px; }
 .level-legend .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
