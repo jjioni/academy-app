@@ -46,10 +46,8 @@ function periodsCoveredLabel(startTime, endTime) {
   if (covered.length === 1) return `${covered[0]}교시`;
   return `${covered[0]}~${covered[covered.length - 1]}교시`;
 }
-// individual level codes (1레벨/2레벨 run as a pair, 3레벨/4레벨 run as a pair; students enrolled
-// in a pair have both codes in profile.levels, so filtering by a single level still matches them)
-const LEVELS = ['1레벨','2레벨','3레벨','4레벨','강사코스-이나모리','강사코스-머스크'];
-const LEVEL_LABELS = { '1레벨': '1레벨 (비기너)', '2레벨': '2레벨 (러너)', '3레벨': '3레벨 (챌린저)', '4레벨': '4레벨 (워너)', '강사코스-이나모리': '강사코스-이나모리', '강사코스-머스크': '강사코스-머스크' };
+const LEVELS = ['1레벨','2레벨','3레벨','4레벨','강사코스-이나모리','강사코스-머스크','세미나'];
+const LEVEL_LABELS = { '1레벨': '1Lv 비기너', '2레벨': '2Lv 러너', '3레벨': '3Lv 챌린저', '4레벨': '4Lv 워너', '강사코스-이나모리': '강사코스-이나모리', '강사코스-머스크': '강사코스-머스크', '세미나': '세미나' };
 
 async function api(path, opts) {
   const res = await fetch('/api' + path, Object.assign({ headers: { 'Content-Type': 'application/json' } }, opts));
@@ -60,12 +58,13 @@ async function api(path, opts) {
 
 function esc(s) { return (s === undefined || s === null) ? '' : String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
-const ROLE_LABEL = { master: '마스터', region_rep: '지역대표', admin: '관리자', instructor: '강사', student: '수강생' };
-function canApprove() { return ['master','region_rep','admin'].includes(ME.role); }
-function canEditTimetable() { return ['master','region_rep','admin'].includes(ME.role); }
-function canManagePayments() { return ['master','region_rep','admin'].includes(ME.role); }
-function canCreateAssignment() { return ['master','region_rep','admin','instructor'].includes(ME.role); }
-function canCheckAttendance() { return ['master','region_rep','admin','instructor'].includes(ME.role); }
+const ROLE_LABEL = { master: '마스터', admin: '관리자(리더)', instructor: '강사', student: '수강생' };
+function canApprove() { return ['master','admin'].includes(ME.role); }
+function canEditTimetable() { return ['master','admin'].includes(ME.role); }
+function canManagePayments() { return ['master','admin'].includes(ME.role); }
+function canCreateAssignment() { return ['master','admin','instructor'].includes(ME.role); }
+function canCheckAttendance() { return ['master','admin','instructor'].includes(ME.role); }
+function isAtLeast_admin() { return ['master','admin'].includes(ME.role); }
 
 const TABS = [
   { key: 'home', label: '🏠 홈' },
@@ -77,6 +76,8 @@ const TABS = [
   { key: 'payments', label: '결제관리' },
   { key: 'approvals', label: '승인관리', show: () => canApprove() },
   { key: 'timetable-admin', label: '시간표 관리', show: () => canEditTimetable() },
+  { key: 'stores', label: '매장 관리', show: () => isAtLeast_admin() },
+  { key: 'settings', label: '설정', show: () => ME.role === 'master' },
   { key: 'account', label: '내 정보' },
 ];
 
@@ -106,7 +107,8 @@ function route() {
   const map = {
     home: renderTimetable, timetable: renderTimetable, attendance: renderAttendance, stats: renderStats,
     feedback: renderFeedback, assignments: renderAssignments, payments: renderPayments,
-    approvals: renderApprovals, 'timetable-admin': renderTimetableAdmin, account: renderAccount
+    approvals: renderApprovals, 'timetable-admin': renderTimetableAdmin, stores: renderStores,
+    settings: renderSettings, account: renderAccount
   };
   (map[key] || renderTimetable)();
 }
@@ -133,6 +135,18 @@ async function loadNotifBanner() {
       }
     } catch (e) {}
   }
+  // 지각/결석 확정 알림 (매장 리더 + 같은 매장 강사)
+  if (canCheckAttendance()) {
+    try {
+      const { notifications: mine } = await api('/notifications/mine');
+      const attnAlerts = mine.filter(n => n.type === 'attendance_alert');
+      if (attnAlerts.length) {
+        html += `<div class="notif-banner">⏰ 출결 알림 (${attnAlerts.length}건): ` +
+          attnAlerts.slice(0, 5).map(n => esc(n.message)).join(' · ') +
+          ` <a href="#" onclick="markNotifsRead(${JSON.stringify(attnAlerts.map(n=>n.id))}); return false;" style="text-decoration:underline">확인 처리</a></div>`;
+      }
+    } catch (e) {}
+  }
   box.innerHTML = html;
 }
 
@@ -152,7 +166,8 @@ const LEVEL_COLOR_MAP = {
   '4레벨': { border: '#6FAAD6', text: '#2B5A82' },                 // 하늘
   '강사코스-이나모리': { border: '#A886D1', text: '#6B3FA0' },      // 연보라
   '강사코스-머스크': { border: '#A886D1', text: '#6B3FA0' },        // 연보라
-  '강사코스': { border: '#A886D1', text: '#6B3FA0' }                // 연보라 (그룹 미상 강사코스)
+  '강사코스': { border: '#A886D1', text: '#6B3FA0' },               // 연보라 (그룹 미상 강사코스)
+  '세미나': { border: '#D98E73', text: '#8C4A2F' }                  // 살구색
 };
 const DEFAULT_ITEM_COLOR = { border: '#3b6ef6', text: '#3b6ef6' };
 function colorForLevel(levelKey, titleKey) {
@@ -171,9 +186,11 @@ async function renderTimetable() {
       <button class="btn small ghost" id="nextM">›</button>
       <select id="regionSel" style="margin-left:12px">${regionOpts}</select>
       <label class="check-toggle"><input type="checkbox" id="internalToggle" ${ttState.showInternal?'checked':''}/> 내부일정 보기</label>
+      <button class="btn small ghost" id="nationalBtn" style="margin-left:auto">🌐 전국 해피니언 스케줄</button>
     </div>
     <div id="legend" class="level-legend"></div>
     <div class="month-grid" id="grid"></div>
+    <div id="nationalModal"></div>
   `;
   content.appendChild(card);
   document.getElementById('monthLabel').textContent = `${ttState.year}년 ${ttState.month}월`;
@@ -181,6 +198,7 @@ async function renderTimetable() {
   document.getElementById('nextM').onclick = () => { ttState.month++; if (ttState.month > 12) { ttState.month = 1; ttState.year++; } renderTimetable(); };
   document.getElementById('regionSel').onchange = (e) => { ttState.regionId = e.target.value; renderTimetable(); };
   document.getElementById('internalToggle').onchange = (e) => { ttState.showInternal = e.target.checked; renderTimetable(); };
+  document.getElementById('nationalBtn').onclick = openNationalScheduleModal;
 
   const { days } = await api(`/timetable/month?year=${ttState.year}&month=${ttState.month}&regionId=${ttState.regionId}&showInternal=${ttState.showInternal}`);
   const grid = document.getElementById('grid');
@@ -220,14 +238,59 @@ async function renderTimetable() {
       const meta = [periodLabel, it.room].filter(Boolean).join(' · ');
       const teacherLine = it.instructorName ? `<span class="lv-teacher">👤 ${esc(it.instructorName)}</span>` : '';
       const subjectLine = it.subject ? `<span class="lv-subject">${esc(it.subject)}</span>` : '';
+      const editBtn = canEditTimetable() ? `<span class="lv-edit" title="이 날짜만 수정(대관 등)" onclick="event.stopPropagation(); openOverrideModal('${it.templateId}','${d.date}', ${JSON.stringify(it.room||'')})">✎</span>` : '';
       return `<div class="day-item ${cls}" style="${style}" title="${esc(label)} ${esc(it.subject||'')} ${esc(it.instructorName||'')} ${esc(it.startTime||'')}-${esc(it.endTime||'')} ${esc(it.room||'')}" onclick="openAttendanceFor('${it.instanceKey}','${d.date}')">
-        <span class="lv-name">${esc(label)}</span>${subjectLine}${teacherLine}<span class="lv-meta">${esc(meta)}</span>
+        <span class="lv-name">${esc(label)}</span>${editBtn}${subjectLine}${teacherLine}<span class="lv-meta">${esc(meta)}</span>
       </div>`;
     }).join('');
     const isWeekend = d.weekday === '금' || d.weekday === '토' || d.weekday === '일';
-    return `<div class="day-cell ${d.date===todayStr?'today':''} ${isWeekend && !d.items.length?'weekend-empty':''}"><div class="date-num">${Number(d.date.slice(8,10))}</div>${items}</div>`;
+    return `<div class="day-cell ${isWeekend?'weekend':''} ${d.date===todayStr?'today':''} ${isWeekend && !d.items.length?'weekend-empty':''}"><div class="date-num">${Number(d.date.slice(8,10))}</div>${items}</div>`;
   }).join('');
   grid.innerHTML = dowHtml + blanks + cellsHtml;
+}
+
+function openOverrideModal(templateId, date, currentRoom) {
+  const room = prompt(`${date} 이 날짜만 룸/장소를 변경합니다. (대관 등 예외 상황)\n빈 값으로 저장하면 원래 룸으로 되돌아갑니다.`, currentRoom || '');
+  if (room === null) return;
+  api('/timetable/override', { method: 'POST', body: JSON.stringify({ templateId: Number(templateId), date, patch: room ? { room } : {}, cancelled: false }) })
+    .then(() => renderTimetable());
+}
+
+async function openNationalScheduleModal() {
+  const modal = document.getElementById('nationalModal');
+  modal.innerHTML = `<div class="card mt16">불러오는 중...</div>`;
+  const [{ weeklyEvents, itariMeeting, circuit }, todosRes] = await Promise.all([
+    api(`/national-schedule?year=${ttState.year}&month=${ttState.month}`),
+    (canApprove() ? api('/todos') : Promise.resolve({ todos: [] }))
+  ]);
+  const canEdit = canEditTimetable();
+  modal.innerHTML = `
+    <div class="card mt16">
+      <h3>🌐 전국 해피니언 스케줄 - ${ttState.year}년 ${ttState.month}월</h3>
+      ${todosRes.todos.length ? todosRes.todos.map(t => `<div class="msg error mb8">⚠️ ${esc(t.message)}</div>`).join('') : ''}
+      <h3 class="mt16" style="font-size:14px">매주 반복 일정</h3>
+      <table><tbody>
+        ${weeklyEvents.map(e => `<tr><td>${e.date}</td><td>${esc(e.title)}</td><td>${e.start}-${e.end}</td></tr>`).join('') || '<tr><td class="muted">해당 없음</td></tr>'}
+      </tbody></table>
+      <h3 class="mt16" style="font-size:14px">한국 이타리더단 미팅 (월 1회, 13:00-18:00)</h3>
+      <div>${itariMeeting ? `${itariMeeting.date} 예정` : '<span class="muted">이번 달 아직 미설정</span>'}</div>
+      ${canEdit ? `<div class="row mt8"><input type="date" id="itariDateInput" value="${itariMeeting ? itariMeeting.date : ''}" /><button class="btn small primary" id="saveItariBtn">날짜 저장</button></div>` : ''}
+      <h3 class="mt16" style="font-size:14px">스승님 심연 스케줄 (자동 계산)</h3>
+      <table><tbody>
+        ${circuit.map(c => `<tr><td>${c.date}</td><td>${esc(c.city)}</td></tr>`).join('') || '<tr><td class="muted">해당 없음</td></tr>'}
+      </tbody></table>
+      <button class="btn small ghost mt8" id="closeNationalBtn">닫기</button>
+    </div>
+  `;
+  document.getElementById('closeNationalBtn').onclick = () => { modal.innerHTML = ''; };
+  if (canEdit) {
+    document.getElementById('saveItariBtn').onclick = async () => {
+      const date = document.getElementById('itariDateInput').value;
+      if (!date) return alert('날짜를 선택하세요.');
+      await api('/national-schedule/itari-meeting', { method: 'POST', body: JSON.stringify({ year: ttState.year, month: ttState.month, date }) });
+      openNationalScheduleModal();
+    };
+  }
 }
 
 function openAttendanceFor(instanceKey, date) {
@@ -273,9 +336,12 @@ async function loadAttBody(allItems) {
   const body = document.getElementById('attBody');
   body.innerHTML = `
     <div class="row mb8">
-      <button class="btn small" onclick="genCheckinCode('${key}')">체크인 코드 발급 (1분 유효)</button>
+      <select id="codePeriodSel">${periods.map(p => `<option value="${p}">${p}교시</option>`).join('')}</select>
+      <button class="btn small" onclick="genCheckinCode('${key}')">체크인 코드 발급</button>
+      <button class="btn small ghost" onclick="endClassSession('${key}')">🔔 수업 종료</button>
       <span id="codeDisplay"></span>
     </div>
+    <div class="muted" style="font-size:11.5px; margin-bottom:8px;">코드 발급 후 60초 안에 제출하면 출석, 넘으면 지각으로 자동 처리됩니다. 다음 교시 코드를 발급하면 이전 교시 미제출자는 자동 결석 처리됩니다.</div>
     <table>
       <thead><tr><th>수강생</th>${periods.map(p => `<th>${p}교시<br><span class="muted" style="font-weight:400">${esc((PERIOD_BLOCKS.find(b=>b.key===String(p))||{}).start||'')}-${esc((PERIOD_BLOCKS.find(b=>b.key===String(p))||{}).end||'')}</span></th>`).join('')}<th>수업 후 피드백</th></tr></thead>
       <tbody>
@@ -295,6 +361,37 @@ async function loadAttBody(allItems) {
   `;
 }
 
+async function endClassSession(instanceKey) {
+  const period = Number(document.getElementById('codePeriodSel').value);
+  await api('/class-sessions/end', { method: 'POST', body: JSON.stringify({ instanceKey, period }) });
+  const { students } = await api(`/students?status=active`);
+  const modal = document.getElementById('feedbackModal');
+  modal.innerHTML = `
+    <div class="card mt16">
+      <h3>수업 종료 - 일괄 피드백 작성</h3>
+      <div class="muted mb8">종료된 수업에 대해 수강생별로 바로 피드백을 남길 수 있습니다.</div>
+      ${students.map(s => `
+        <div class="field">
+          <label>${esc(s.name)}</label>
+          <textarea id="bulkfb_${s.id}" placeholder="피드백을 입력하세요 (비워두면 저장하지 않습니다)"></textarea>
+        </div>
+      `).join('')}
+      <button class="btn primary" onclick="submitBulkFeedback('${instanceKey}', ${JSON.stringify(students.map(s=>s.id))})">전체 저장</button>
+    </div>
+  `;
+}
+async function submitBulkFeedback(instanceKey, studentIds) {
+  const jobs = studentIds.map(id => {
+    const el = document.getElementById(`bulkfb_${id}`);
+    const comment = el ? el.value.trim() : '';
+    if (!comment) return null;
+    return api('/feedback/instructor', { method: 'POST', body: JSON.stringify({ studentId: id, instanceKey, comment }) });
+  }).filter(Boolean);
+  await Promise.all(jobs);
+  alert(`${jobs.length}건 저장되었습니다.`);
+  document.getElementById('feedbackModal').innerHTML = '';
+}
+
 async function setAttendance(instanceKey, period, studentId, status) {
   await api('/attendance/check', { method: 'POST', body: JSON.stringify({ instanceKey, period, studentId, status }) });
   loadAttBody(window._allItemsCache || []);
@@ -303,14 +400,15 @@ async function setAttendance(instanceKey, period, studentId, status) {
 
 async function genCheckinCode(instanceKey) {
   const regionId = ttState.regionId || REGIONS[0].id;
-  const { code, ttlMs } = await api('/attendance/checkin-code/generate', { method: 'POST', body: JSON.stringify({ instanceKey, period: 1, regionId }) });
+  const period = Number(document.getElementById('codePeriodSel').value);
+  const { code, lateAfterMs } = await api('/attendance/checkin-code/generate', { method: 'POST', body: JSON.stringify({ instanceKey, period, regionId }) });
   const el = document.getElementById('codeDisplay');
-  let remain = Math.floor(ttlMs / 1000);
-  el.innerHTML = `<span class="qr-code-num" style="font-size:22px">${code}</span> <span class="muted">(${remain}초)</span>`;
+  let remain = Math.floor(lateAfterMs / 1000);
+  el.innerHTML = `<span class="qr-code-num" style="font-size:22px">${code}</span> <span class="muted">(출석 인정 앞으로 ${remain}초, 이후 지각 처리)</span>`;
   const timer = setInterval(() => {
     remain--;
-    if (remain <= 0) { clearInterval(timer); el.innerHTML = '<span class="muted">코드 만료됨</span>'; return; }
-    el.querySelector('.muted').textContent = `(${remain}초)`;
+    if (remain <= 0) { clearInterval(timer); el.innerHTML = `<span class="qr-code-num" style="font-size:22px">${code}</span> <span class="muted">(지금부터 제출하면 지각 처리 - 코드는 다음 교시 코드 발급 전까지 계속 유효)</span>`; return; }
+    el.querySelector('.muted').textContent = `(출석 인정 앞으로 ${remain}초, 이후 지각 처리)`;
   }, 1000);
 }
 
@@ -348,7 +446,8 @@ async function renderAttendanceStudent(content) {
   content.appendChild(statsCard);
   const { stats } = await api(`/attendance/stats?studentId=${ME.id}`);
   const s = stats[0];
-  document.getElementById('myStats').innerHTML = s ? renderStatsTable([s]) : '기록이 없습니다.';
+  const warning = s && s.examWarning ? `<div class="msg error mb8">⚠️ 현재 출석률(${s.percents['출석']}%)이 이번 진화시험 응시 기준(${s.examThreshold}%)에 못 미칩니다. 매장 리더에게 문의하세요.</div>` : '';
+  document.getElementById('myStats').innerHTML = warning + (s ? renderStatsTable([s]) : '기록이 없습니다.');
 }
 
 function submitCheckinCode() {
@@ -402,6 +501,17 @@ async function renderFeedback() {
   if (ME.role === 'student') return renderFeedbackStudent(content);
 
   content.innerHTML += `<div class="page-sub">강사 → 수강생 피드백 열람, 수강생 → 강사 피드백(익명) 열람</div>`;
+
+  try {
+    const { pending, items } = await api('/feedback/pending-today');
+    if (pending > 0) {
+      const pendingCard = document.createElement('div'); pendingCard.className = 'card';
+      pendingCard.innerHTML = `<div class="msg error">📝 오늘 종료한 수업 중 아직 작성하지 않은 피드백이 <b>${pending}건</b> 있습니다. 당일 안에 작성해주세요.
+        <ul style="margin:8px 0 0 18px; padding:0;">${items.map(i => `<li>${esc(i.studentName)} (${esc(i.instanceKey)}, ${i.period}교시)</li>`).join('')}</ul></div>`;
+      content.appendChild(pendingCard);
+    }
+  } catch (e) {}
+
   const { students } = await api('/students?status=active');
   const card = document.createElement('div'); card.className = 'card';
   card.innerHTML = `<h3>수강생별 강사 피드백</h3>
@@ -428,7 +538,6 @@ async function renderFeedback() {
     `).join('') : '<div class="muted">피드백 없음</div>';
   }
 }
-function isAtLeast_admin() { return ['master','region_rep','admin'].includes(ME.role); }
 
 async function renderFeedbackStudent(content) {
   content.innerHTML += `<div class="page-sub">내가 받은 피드백 확인 · 강사에게 피드백 남기기 (강사에겐 익명 처리)</div>`;
@@ -439,7 +548,7 @@ async function renderFeedbackStudent(content) {
   document.getElementById('myFb').innerHTML = feedback.length ? feedback.map(f => `<div class="card"><b>${esc(f.authorName)}</b> · <span class="muted">${new Date(f.createdAt).toLocaleString()}</span><div class="mt8">${esc(f.comment)}</div></div>`).join('') : '<div class="muted">아직 받은 피드백이 없습니다.</div>';
 
   const { staff } = await api('/staff');
-  const instructors = staff.filter(s => ['instructor','admin','region_rep','master'].includes(s.role));
+  const instructors = staff.filter(s => ['instructor','admin','master'].includes(s.role));
   const card2 = document.createElement('div'); card2.className = 'card';
   card2.innerHTML = `
     <h3>강사에게 피드백 남기기</h3>
@@ -483,7 +592,7 @@ async function renderAssignments() {
         <div class="field" style="flex:1"><label>대상 요일</label><select id="aWeekday"><option value="">전체</option>${WEEKDAYS.map(w=>`<option value="${w}">${w}</option>`).join('')}</select></div>
       </div>
       <div class="row">
-        <div class="field" style="flex:1"><label>마감일</label><input id="aDeadline" type="date" /></div>
+        <div class="field" style="flex:1"><label>마감일시</label><input id="aDeadline" type="datetime-local" /></div>
         <div class="field" style="flex:1"><label>제출 방식</label><select id="aSubType"><option value="none">제출 없음(완료체크만)</option><option value="file">파일</option><option value="link">링크</option><option value="both">파일+링크 모두 허용</option></select></div>
       </div>
       <button class="btn primary" id="createAssign">등록</button>
@@ -529,7 +638,7 @@ function renderAssignmentRow(a) {
     submitBox = `<div class="mt8"><button class="btn small ghost" onclick="viewSubmissions(${a.id})">제출 현황 (${a.submissionCount})</button><div id="subs_${a.id}"></div></div>`;
   }
   return `<div class="card">
-    <b>${esc(a.title)}</b> <span class="badge internal">마감 ${esc(a.deadline)}</span>
+    <b>${esc(a.title)}</b> <span class="badge internal">마감 ${esc((a.deadline||'').replace('T',' '))}</span>
     <div class="muted mt8">${target}</div>
     <div class="mt8">${esc(a.description)}</div>
     ${submitBox}
@@ -564,7 +673,33 @@ async function viewSubmissions(id) {
 // ===================== 결제관리 =====================
 async function renderPayments() {
   const content = document.getElementById('content');
-  content.innerHTML = `<div class="page-title">결제관리</div><div class="page-sub">분납 회차 체크 · 후불 여부 · 환불</div>`;
+  content.innerHTML = `<div class="page-title">결제관리</div><div class="page-sub">분납 회차 체크 · 후불 여부 · 환불 · 월별 회비 현황</div>`;
+
+  if (canManagePayments()) {
+    const duesCard = document.createElement('div'); duesCard.className = 'card';
+    const thisMonth = new Date().toISOString().slice(0, 7);
+    duesCard.innerHTML = `
+      <h3>월별 회비 현황 (1-4Lv · 강사코스 · 세미나 대상 자동 생성)</h3>
+      <div class="row mb8"><input type="month" id="duesMonth" value="${thisMonth}" /><button class="btn small" id="loadDuesBtn">조회</button></div>
+      <div id="duesTable">불러오는 중...</div>
+    `;
+    content.appendChild(duesCard);
+    async function loadDues() {
+      const month = document.getElementById('duesMonth').value || thisMonth;
+      const { dues } = await api(`/monthly-dues?month=${month}`);
+      document.getElementById('duesTable').innerHTML = dues.length ? `<table><thead><tr><th>이름</th><th>소속</th><th>레벨</th><th>입금예정일</th><th>금액</th><th>입금확인</th></tr></thead><tbody>
+        ${dues.map(d => `<tr>
+          <td>${esc(d.studentName)}</td><td>${esc(d.regionName)}</td><td>${esc((d.levels||[]).join(','))}</td>
+          <td><input type="date" id="due_date_${d.id}" value="${esc(d.dueDate||'')}" style="width:130px" /></td>
+          <td><input type="number" id="due_amt_${d.id}" value="${d.amount ?? ''}" placeholder="금액 입력" style="width:100px" /></td>
+          <td><label><input type="checkbox" id="due_paid_${d.id}" ${d.paid?'checked':''} /> ${d.paid ? `입금(${esc(d.paidDate||'')})` : '미입금'}</label>
+          <button class="btn small ghost" onclick="saveDue(${d.id})">저장</button></td>
+        </tr>`).join('')}
+      </tbody></table>` : '<div class="muted">대상 수강생이 없습니다.</div>';
+    }
+    document.getElementById('loadDuesBtn').onclick = loadDues;
+    loadDues();
+  }
 
   if (canManagePayments()) {
     const { students } = await api('/students?status=active');
@@ -616,6 +751,13 @@ async function renderPayments() {
 }
 async function toggleInstallment(paymentId, no) {
   await api(`/payments/${paymentId}/installment/${no}/toggle`, { method: 'POST' });
+  renderPayments();
+}
+async function saveDue(id) {
+  const dueDate = document.getElementById(`due_date_${id}`).value;
+  const amount = document.getElementById(`due_amt_${id}`).value;
+  const paid = document.getElementById(`due_paid_${id}`).checked;
+  await api(`/monthly-dues/${id}`, { method: 'POST', body: JSON.stringify({ dueDate, amount, paid }) });
   renderPayments();
 }
 function openRefund(studentId) {
@@ -858,6 +1000,63 @@ async function deleteTemplate(id) {
   renderTimetableAdmin();
 }
 
+// ===================== 매장 관리 =====================
+async function renderStores() {
+  const content = document.getElementById('content');
+  content.innerHTML = `<div class="page-title">매장 관리</div><div class="page-sub">주소·GPS 좌표(출석 인증용)·입금예정일 등록/수정</div>`;
+  const card = document.createElement('div'); card.className = 'card';
+  card.innerHTML = `<div id="storeList">불러오는 중...</div>`;
+  content.appendChild(card);
+  const areas = [...new Set(REGIONS.map(r => r.area).filter(Boolean))];
+  const grouped = areas.length ? areas : [''];
+  card.querySelector('#storeList').innerHTML = grouped.map(area => `
+    <h3 class="mt16">${esc(area || '기타')}</h3>
+    <table><thead><tr><th>매장명</th><th>리더</th><th>주소</th><th>위도</th><th>경도</th><th>입금예정일</th><th></th></tr></thead><tbody>
+      ${REGIONS.filter(r => (r.area || '') === area).map(r => `
+        <tr>
+          <td>${esc(r.name)}</td>
+          <td>${esc(r.leaderName || '-')}</td>
+          <td><input id="addr_${r.id}" value="${esc(r.address||'')}" style="width:160px" /></td>
+          <td><input id="lat_${r.id}" value="${r.lat ?? ''}" style="width:90px" placeholder="예: 37.5274" /></td>
+          <td><input id="lng_${r.id}" value="${r.lng ?? ''}" style="width:90px" placeholder="예: 127.0400" /></td>
+          <td><input id="due_${r.id}" type="number" value="${r.paymentDueDay ?? ''}" style="width:60px" placeholder="일" /></td>
+          <td><button class="btn small primary" onclick="saveStore(${r.id})">저장</button></td>
+        </tr>
+      `).join('')}
+    </tbody></table>
+  `).join('');
+}
+async function saveStore(id) {
+  const address = document.getElementById(`addr_${id}`).value;
+  const lat = document.getElementById(`lat_${id}`).value;
+  const lng = document.getElementById(`lng_${id}`).value;
+  const paymentDueDay = document.getElementById(`due_${id}`).value;
+  await api(`/regions/${id}`, { method: 'PUT', body: JSON.stringify({ address, lat, lng, paymentDueDay }) });
+  const regionsRes = await api('/regions'); REGIONS = regionsRes.regions;
+  alert('저장되었습니다.');
+  renderStores();
+}
+
+// ===================== 설정 (마스터 전용) =====================
+async function renderSettings() {
+  const content = document.getElementById('content');
+  content.innerHTML = `<div class="page-title">설정</div><div class="page-sub">진화시험(3·6·9·12월) 응시 자격 출석률 기준</div>`;
+  const card = document.createElement('div'); card.className = 'card';
+  const { value } = await api('/settings/exam_attendance_threshold');
+  card.innerHTML = `
+    <h3>진화시험 응시 자격 - 최소 출석률(%)</h3>
+    <div class="muted mb8">값을 설정하지 않으면 수강생 개인 페이지에 경고가 표시되지 않습니다. 임의로 기본값을 넣지 않았으니 직접 입력해주세요.</div>
+    <div class="row"><input id="thresholdInput" type="number" min="0" max="100" value="${value ?? ''}" style="width:100px" /><button class="btn primary small" id="saveThreshold">저장</button></div>
+    <div id="thresholdMsg" class="mt8"></div>
+  `;
+  content.appendChild(card);
+  document.getElementById('saveThreshold').onclick = async () => {
+    const v = document.getElementById('thresholdInput').value;
+    await api('/settings/exam_attendance_threshold', { method: 'POST', body: JSON.stringify({ value: v === '' ? null : Number(v) }) });
+    document.getElementById('thresholdMsg').innerHTML = '<div class="msg ok">저장되었습니다.</div>';
+  };
+}
+
 // ===================== 내 정보 =====================
 async function renderAccount() {
   const content = document.getElementById('content');
@@ -869,27 +1068,12 @@ async function renderAccount() {
       <div>역할: ${ROLE_LABEL[ME.role]}</div>
     </div>
     <div class="card">
-      <h3>아이디 변경</h3>
-      <div class="field"><input id="newPhone" placeholder="새 아이디 (휴대폰번호 또는 원하는 문자열)" value="${esc(ME.phone)}" /></div>
-      <button class="btn primary" id="changePhoneBtn">변경</button>
-      <div id="phoneMsg" class="mt8"></div>
-    </div>
-    <div class="card">
       <h3>비밀번호 변경</h3>
       <div class="field"><input id="newPw" type="password" placeholder="새 비밀번호" /></div>
       <button class="btn primary" id="changePwBtn">변경</button>
       <div id="pwMsg" class="mt8"></div>
     </div>
   `;
-  document.getElementById('changePhoneBtn').onclick = async () => {
-    const newPhone = document.getElementById('newPhone').value;
-    try {
-      const r = await api('/change-phone', { method: 'POST', body: JSON.stringify({ newPhone }) });
-      ME.phone = r.phone;
-      document.getElementById('phoneMsg').innerHTML = '<div class="msg ok">변경되었습니다. 다음 로그인부터 새 아이디를 사용하세요.</div>';
-      document.getElementById('roleBadge').textContent = `${ROLE_LABEL[ME.role]} · ${esc(ME.name)}`;
-    } catch (e) { document.getElementById('phoneMsg').innerHTML = `<div class="msg error">${esc(e.message)}</div>`; }
-  };
   document.getElementById('changePwBtn').onclick = async () => {
     const newPassword = document.getElementById('newPw').value;
     try { await api('/change-password', { method: 'POST', body: JSON.stringify({ newPassword }) }); document.getElementById('pwMsg').innerHTML = '<div class="msg ok">변경되었습니다.</div>'; }

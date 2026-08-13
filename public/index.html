@@ -8,7 +8,7 @@
 </head>
 <body>
 <div class="center-screen">
-  <div class="auth-card">
+  <div class="auth-card" style="max-width:520px">
     <h1>아카데미 시간표</h1>
     <div class="sub">로그인 후 시간표 · 출석 · 피드백 · 과제를 확인하세요.</div>
 
@@ -22,48 +22,89 @@
     <form id="loginForm">
       <div class="field"><label>아이디</label><input name="phone" placeholder="휴대폰번호 또는 아이디" required /></div>
       <div class="field"><label>비밀번호</label><input name="password" type="password" required /></div>
+      <div class="field" style="display:flex; gap:16px; font-size:13px;">
+        <label style="display:flex; align-items:center; gap:4px;"><input type="checkbox" id="saveIdChk" /> 아이디 저장</label>
+        <label style="display:flex; align-items:center; gap:4px;"><input type="checkbox" id="autoLoginChk" checked /> 자동 로그인</label>
+      </div>
       <button class="btn primary block" type="submit">로그인</button>
     </form>
 
     <form id="signupForm" style="display:none">
       <div class="field">
-        <label>가입 유형</label>
+        <label>역할</label>
         <select name="role" id="signupRole">
           <option value="student">수강생</option>
           <option value="instructor">강사</option>
+          <option value="admin">리더(관리자)</option>
         </select>
       </div>
-      <div class="field"><label>이름</label><input name="name" required /></div>
-      <div class="field"><label>지점</label><select name="regionId" id="signupRegion"></select></div>
-      <div class="field"><label>휴대폰번호</label><input name="phone" placeholder="01012345678" required /></div>
-      <div class="field"><label>비밀번호</label><input name="password" type="password" required /></div>
+      <div class="row">
+        <div class="field" style="flex:1"><label>이름(예명)</label><input name="name" required /></div>
+        <div class="field" style="flex:1"><label>입금자명(본명)</label><input name="depositorName" required /></div>
+      </div>
+      <div class="row">
+        <div class="field" style="flex:1"><label>휴대폰번호 (로그인 아이디로 사용됩니다)</label><input name="phone" placeholder="01012345678" required /></div>
+        <div class="field" style="flex:1"><label>비밀번호</label><input name="password" type="password" required /></div>
+      </div>
+      <div class="field"><label>내국인 / 외국인</label>
+        <select name="nationality" id="signupNationality">
+          <option value="내국인">내국인</option>
+          <option value="외국인">외국인</option>
+        </select>
+      </div>
+      <div class="field"><label>소속(매장)</label><select name="regionId" id="signupRegion"></select></div>
+      <div class="field muted" id="leaderDisplay" style="font-size:13px"></div>
 
       <div id="studentFields">
-        <div class="field"><label>수강 희망 레벨</label>
-          <select name="level">
-            <option value="비기너,러너">비기너, 러너</option>
-            <option value="챌린저,위너">챌린저, 위너</option>
-            <option value="강사코스-이나모리">강사코스-이나모리</option>
-            <option value="강사코스-머스크">강사코스-머스크</option>
-          </select>
+        <div class="field"><label>수강 희망 레벨 (복수 선택 가능)</label>
+          <div class="row" id="levelChecks">
+            <label><input type="checkbox" class="levelChk" value="1레벨" /> 1Lv 비기너</label>
+            <label><input type="checkbox" class="levelChk" value="2레벨" /> 2Lv 러너</label>
+            <label><input type="checkbox" class="levelChk" value="3레벨" /> 3Lv 챌린저</label>
+            <label><input type="checkbox" class="levelChk" value="4레벨" /> 4Lv 워너</label>
+            <label><input type="checkbox" class="levelChk" value="강사코스-이나모리" /> 강사코스-이나모리</label>
+            <label><input type="checkbox" class="levelChk" value="강사코스-머스크" /> 강사코스-머스크</label>
+            <label><input type="checkbox" class="levelChk" value="세미나" /> 세미나</label>
+          </div>
         </div>
-        <div class="field"><label>수강 희망 요일 (쉼표로 구분, 예: 월,수)</label><input name="desiredDays" /></div>
-        <div class="field"><label>경력</label><input name="career" placeholder="예: 3-6개월 미만" /></div>
-        <div class="field"><label>입사 시기 (년/분기)</label><input name="joinPeriod" placeholder="예: 2026년 1분기" /></div>
-        <div class="field"><label>MBTI</label><input name="mbti" /></div>
-        <div class="field"><label>DISC</label><input name="disc" /></div>
+        <div class="field"><label>수강 희망 요일 (복수 선택 가능)</label>
+          <div class="row">
+            <label><input type="checkbox" class="dayChk" value="월" /> 월</label>
+            <label><input type="checkbox" class="dayChk" value="화" /> 화</label>
+            <label><input type="checkbox" class="dayChk" value="수" /> 수</label>
+            <label><input type="checkbox" class="dayChk" value="목" /> 목</label>
+          </div>
+        </div>
+        <div class="row">
+          <div class="field" style="flex:1"><label>경력</label><input name="career" placeholder="예: 3-6개월 미만" /></div>
+          <div class="field" style="flex:1"><label>첫 출근일</label><input name="firstWorkDate" type="date" /></div>
+        </div>
+        <div class="row">
+          <div class="field" style="flex:1"><label>DISC</label><input name="disc" placeholder="예: D" /></div>
+          <div class="field" style="flex:1"><label>MBTI</label>
+            <select name="mbti" id="mbtiSelect">
+              <option value="">선택 안함</option>
+            </select>
+          </div>
+        </div>
+        <div class="field"><label>희망 입봉 시기</label><input name="debutMonth" placeholder="예: 2026년 7월" /></div>
+        <div class="field" id="tuitionCheckField" style="display:none">
+          <label style="display:flex; align-items:flex-start; gap:6px; font-weight:400;">
+            <input type="checkbox" name="tuitionDateConfirmed" style="margin-top:3px" />
+            <span>교육비 입금 날짜를 확인했습니다. (강남·강서: 매월 10일 / 수원·인천: 추후 안내)</span>
+          </label>
+        </div>
       </div>
-      <div id="instructorFields" style="display:none">
+      <div id="staffFields" style="display:none">
         <div class="field"><label>연락처(확인용, 정산 목적)</label><input name="phone2" placeholder="현금영수증 발급용 연락처" /></div>
-        <div class="field"><label>주민등록번호 (현금영수증 발급용, 선택)</label><input name="rrn" placeholder="000000-0000000" /></div>
       </div>
 
-      <div class="field"><label>신분증 사진</label><input type="file" id="idCardFile" accept="image/*" /></div>
+      <div class="field" id="idCardField"><label>신분증 사진 <span class="muted">(현금영수증 발행 시 필수 정보입니다. 외국인은 생략 가능)</span></label><input type="file" id="idCardFile" accept="image/*" /></div>
       <div class="field"><label>통장 사본 사진</label><input type="file" id="bankbookFile" accept="image/*" /></div>
       <div class="muted mt8" style="font-size:12px; margin-bottom:8px;">첨부한 사진은 관리자만 확인할 수 있는 곳에 안전하게 보관됩니다.</div>
 
       <button class="btn primary block" type="submit">회원가입 신청</button>
-      <div class="muted mt8" style="font-size:12px">가입 신청 후 관리자 승인이 완료되어야 로그인할 수 있습니다.</div>
+      <div class="muted mt8" style="font-size:12px">가입 신청 후 승인이 완료되어야 로그인할 수 있습니다.</div>
     </form>
   </div>
 </div>
@@ -71,6 +112,9 @@
 <script>
 const msgBox = document.getElementById('msg');
 function showMsg(text, type) { msgBox.innerHTML = `<div class="msg ${type}">${text}</div>`; }
+
+const MBTI_TYPES = ['ISTJ','ISFJ','INFJ','INTJ','ISTP','ISFP','INFP','INTP','ESTP','ESFP','ENFP','ENTP','ESTJ','ESFJ','ENFJ','ENTJ'];
+document.getElementById('mbtiSelect').innerHTML = '<option value="">선택 안함</option>' + MBTI_TYPES.map(m => `<option value="${m}">${m}</option>`).join('');
 
 document.getElementById('tabLogin').onclick = () => {
   document.getElementById('tabLogin').classList.add('active');
@@ -86,19 +130,50 @@ document.getElementById('tabSignup').onclick = () => {
   document.getElementById('loginForm').style.display = 'none';
   msgBox.innerHTML = '';
 };
-document.getElementById('signupRole').onchange = (e) => {
-  document.getElementById('studentFields').style.display = e.target.value === 'student' ? 'block' : 'none';
-  document.getElementById('instructorFields').style.display = e.target.value === 'instructor' ? 'block' : 'none';
+function refreshRoleFields() {
+  const role = document.getElementById('signupRole').value;
+  document.getElementById('studentFields').style.display = role === 'student' ? 'block' : 'none';
+  document.getElementById('staffFields').style.display = (role === 'instructor' || role === 'admin') ? 'block' : 'none';
+  refreshTuitionCheck();
+}
+document.getElementById('signupRole').onchange = refreshRoleFields;
+
+function refreshTuitionCheck() {
+  const role = document.getElementById('signupRole').value;
+  const isForeigner = document.getElementById('signupNationality').value === '외국인';
+  const has1to4 = [...document.querySelectorAll('.levelChk:checked')].some(c => ['1레벨','2레벨','3레벨','4레벨'].includes(c.value));
+  document.getElementById('tuitionCheckField').style.display = (role === 'student' && !isForeigner && has1to4) ? 'block' : 'none';
+}
+document.querySelectorAll('.levelChk').forEach(c => c.onchange = refreshTuitionCheck);
+document.getElementById('signupNationality').onchange = () => {
+  const isForeigner = document.getElementById('signupNationality').value === '외국인';
+  document.getElementById('idCardField').style.display = isForeigner ? 'none' : 'block';
+  refreshTuitionCheck();
 };
 
 document.getElementById('loginForm').onsubmit = async (e) => {
   e.preventDefault();
   const fd = new FormData(e.target);
-  const res = await fetch('/api/login', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(Object.fromEntries(fd)) });
+  const remember = document.getElementById('autoLoginChk').checked;
+  const saveId = document.getElementById('saveIdChk').checked;
+  const payload = Object.fromEntries(fd);
+  payload.remember = remember;
+  const res = await fetch('/api/login', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
   const data = await res.json();
   if (!res.ok) return showMsg(data.error || '로그인 실패', 'error');
+  if (saveId) localStorage.setItem('savedPhone', payload.phone);
+  else localStorage.removeItem('savedPhone');
   location.href = '/dashboard.html';
 };
+
+// 아이디 저장 기능: 저장된 아이디가 있으면 로그인 폼에 자동으로 채워준다
+(() => {
+  const saved = localStorage.getItem('savedPhone');
+  if (saved) {
+    document.querySelector('#loginForm input[name=phone]').value = saved;
+    document.getElementById('saveIdChk').checked = true;
+  }
+})();
 
 function readFileAsPhoto(fileEl) {
   return new Promise((resolve) => {
@@ -115,6 +190,12 @@ document.getElementById('signupForm').onsubmit = async (e) => {
   e.preventDefault();
   const fd = Object.fromEntries(new FormData(e.target));
   const submitBtn = e.target.querySelector('button[type=submit]');
+  const levels = [...document.querySelectorAll('.levelChk:checked')].map(c => c.value);
+  const desiredDays = [...document.querySelectorAll('.dayChk:checked')].map(c => c.value);
+  const isForeigner = fd.nationality === '외국인';
+  if (fd.role === 'student' && !isForeigner && levels.some(l => ['1레벨','2레벨','3레벨','4레벨'].includes(l)) && !document.querySelector('[name=tuitionDateConfirmed]').checked) {
+    return showMsg('교육비 입금 날짜 확인 체크박스를 확인해주세요.', 'error');
+  }
   submitBtn.disabled = true; submitBtn.textContent = '업로드 중...';
   try {
     const [idCardPhoto, bankbookPhoto] = await Promise.all([
@@ -122,17 +203,19 @@ document.getElementById('signupForm').onsubmit = async (e) => {
       readFileAsPhoto(document.getElementById('bankbookFile'))
     ]);
     const body = {
-      role: fd.role, name: fd.name, phone: fd.phone, password: fd.password, regionId: fd.regionId,
-      level: fd.level, desiredDays: (fd.desiredDays || '').split(',').map(s => s.trim()).filter(Boolean),
-      career: fd.career, joinPeriod: fd.joinPeriod, mbti: fd.mbti, disc: fd.disc,
-      extra: fd.role === 'instructor' ? JSON.stringify({ phone2: fd.phone2, rrn: fd.rrn }) : '',
+      role: fd.role, name: fd.name, depositorName: fd.depositorName, phone: fd.phone, password: fd.password,
+      regionId: fd.regionId, nationality: fd.nationality, levels, desiredDays,
+      career: fd.career, firstWorkDate: fd.firstWorkDate, mbti: fd.mbti, disc: fd.disc, debutMonth: fd.debutMonth,
+      tuitionDateConfirmed: !!document.querySelector('[name=tuitionDateConfirmed]').checked,
+      extra: (fd.role === 'instructor' || fd.role === 'admin') ? JSON.stringify({ phone2: fd.phone2 }) : '',
       idCardPhoto, bankbookPhoto
     };
     const res = await fetch('/api/signup', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
     const data = await res.json();
     if (!res.ok) return showMsg(data.error || '가입 실패', 'error');
-    showMsg('가입 신청 완료! 관리자 승인 후 로그인할 수 있습니다.', 'ok');
+    showMsg('가입 신청 완료! 승인 후 로그인할 수 있습니다.', 'ok');
     e.target.reset();
+    refreshRoleFields();
   } finally {
     submitBtn.disabled = false; submitBtn.textContent = '회원가입 신청';
   }
@@ -141,10 +224,25 @@ document.getElementById('signupForm').onsubmit = async (e) => {
 // if already logged in, go straight to dashboard
 fetch('/api/me').then(r => r.json()).then(d => { if (d.user) location.href = '/dashboard.html'; });
 
-// populate region select (needs a plain fetch since /api/regions doesn't require login)
+// populate region select (needs a plain fetch since /api/regions doesn't require login), grouped by area
 fetch('/api/regions').then(r => r.json()).then(d => {
   const sel = document.getElementById('signupRegion');
-  sel.innerHTML = (d.regions || []).map(r => `<option value="${r.id}">${r.name}</option>`).join('');
+  const regions = d.regions || [];
+  const areas = [...new Set(regions.map(r => r.area).filter(Boolean))];
+  let html = '';
+  areas.forEach(area => {
+    html += `<optgroup label="${area}">` + regions.filter(r => r.area === area).map(r => `<option value="${r.id}" data-leader="${r.leaderName||''}">${r.name}</option>`).join('') + `</optgroup>`;
+  });
+  const noArea = regions.filter(r => !r.area);
+  if (noArea.length) html += noArea.map(r => `<option value="${r.id}" data-leader="${r.leaderName||''}">${r.name}</option>`).join('');
+  sel.innerHTML = html;
+  const updateLeader = () => {
+    const opt = sel.options[sel.selectedIndex];
+    const leader = opt ? opt.getAttribute('data-leader') : '';
+    document.getElementById('leaderDisplay').textContent = leader ? `이 매장의 리더: ${leader}` : '';
+  };
+  sel.onchange = updateLeader;
+  updateLeader();
 }).catch(() => {});
 </script>
 </body>

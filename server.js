@@ -6,16 +6,21 @@ const crypto = require('crypto');
 
 const db = require('./lib/db');
 const { hashPassword, verifyPassword, randomToken, randomCode } = require('./lib/auth');
-const { distanceMeters, todayStr, weekdayKo, daysInMonth } = require('./lib/util');
+const { distanceMeters, todayStr, weekdayKo, daysInMonth, lastSaturdayOfMonth, masterCircuitSchedule, yearQuarterLabel } = require('./lib/util');
 const google = require('./lib/google');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const UPLOAD_DIR = path.join(__dirname, 'uploads');
 
-const ROLE_LEVEL = { master: 4, region_rep: 3, admin: 2, instructor: 1, student: 0 };
+// 4단계 권한 구조: 마스터 / 관리자(매장 리더) / 강사 / 수강생
+const ROLE_LEVEL = { master: 3, admin: 2, instructor: 1, student: 0 };
 const CHECKIN_RADIUS_M = 50;
-const CHECKIN_CODE_TTL_MS = 60 * 1000;
+// 코드 발급 후 이 시간 안에 제출하면 "출석", 넘으면 "지각". 코드 자체는 만료되지 않고
+// 다음 교시 코드가 발급될 때까지 계속 유효하다 (강사마다 진행 속도가 달라 고정 시각 체크가 불가능하기 때문).
+const LATE_THRESHOLD_MS = 60 * 1000;
+// 결제(회비) 자동 생성 대상 레벨
+const BILLABLE_LEVELS = ['1레벨', '2레벨', '3레벨', '4레벨', '강사코스-이나모리', '강사코스-머스크', '세미나'];
 
 // ---------- sessions (persisted to disk so "로그인 유지" survives server restarts —
 // an in-memory Map would forget everyone every time the process restarts, which
@@ -42,47 +47,105 @@ function isAtLeast(user, role) {
   return ROLE_LEVEL[user.role] >= ROLE_LEVEL[role];
 }
 function canApprove(user) {
-  return user && ['master', 'region_rep', 'admin'].includes(user.role);
+  return user && ['master', 'admin'].includes(user.role);
 }
 function canEditTimetable(user) {
-  return user && ['master', 'region_rep', 'admin'].includes(user.role);
+  return user && ['master', 'admin'].includes(user.role);
 }
 function canManagePayments(user) {
-  return user && ['master', 'region_rep', 'admin'].includes(user.role);
+  return user && ['master', 'admin'].includes(user.role);
 }
 function canWriteInstructorFeedback(user) {
-  return user && ['master', 'region_rep', 'admin', 'instructor'].includes(user.role);
+  return user && ['master', 'admin', 'instructor'].includes(user.role);
 }
 function canCreateAssignment(user) {
-  return user && ['master', 'region_rep', 'admin', 'instructor'].includes(user.role);
+  return user && ['master', 'admin', 'instructor'].includes(user.role);
 }
 
-// Levels: 1레벨/2레벨 run as a pair, 3레벨/4레벨 run as a pair, plus two 강사코스 tracks.
-// A student's chosen "pair" (from signup or CSV) expands into individual level codes so
-// timetable/attendance/assignment matching can key off a single level (e.g. "1레벨").
+// Legacy helper for old CSV imports / free-text level values (기존 출석부 데이터 호환용).
+// 신규 회원가입은 levels 배열을 그대로 받으므로 이 함수를 거치지 않는다.
 function expandLevelSelection(raw) {
   const v = (raw || '').trim();
   if (v === '1,2' || v.includes('비기너') || v.includes('러너')) return ['1레벨', '2레벨'];
   if (v === '3,4' || v.includes('챌린저') || v.includes('위너') || v.includes('워너')) return ['3레벨', '4레벨'];
   if (v.includes('이나모리')) return ['강사코스-이나모리'];
   if (v.includes('머스크')) return ['강사코스-머스크'];
+  if (v.includes('세미나')) return ['세미나'];
   if (v.includes('강사코스')) return ['강사코스'];
   return v ? [v] : [];
 }
 
 // Notify the region's admin(s) ("매장 리더") that a new signup needs approval.
+// 리더(관리자) 본인의 가입 신청은 그 매장에 아직 리더가 없다는 뜻이므로 마스터에게 보낸다.
 function notifyRegionAdminsOfSignup(newUser) {
+  const roleLabel = { student: '수강생', instructor: '강사', admin: '리더' }[newUser.role] || newUser.role;
+  if (newUser.role === 'admin') {
+    db.find('users', u => u.role === 'master' && u.status === 'active').forEach(master => {
+      db.insert('notifications', {
+        targetUserId: master.id, type: 'approval_pending',
+        message: `${newUser.name}님이 매장 리더(관리자)로 가입 신청했습니다. 승인해주세요.`,
+        relatedUserId: newUser.id, read: false, createdAt: new Date().toISOString()
+      });
+    });
+    return;
+  }
   if (!newUser.regionId) return;
   const admins = db.find('users', u => u.role === 'admin' && u.status === 'active' && String(u.regionId) === String(newUser.regionId));
-  admins.forEach(admin => {
+  const targets = admins.length ? admins : db.find('users', u => u.role === 'master' && u.status === 'active');
+  targets.forEach(admin => {
     db.insert('notifications', {
       targetUserId: admin.id,
       type: 'approval_pending',
-      message: `${newUser.name}님이 ${newUser.role === 'student' ? '수강생' : '강사'}으로 가입 신청했습니다. 승인해주세요.`,
+      message: `${newUser.name}님이 ${roleLabel}(으)로 가입 신청했습니다. 승인해주세요.`,
       relatedUserId: newUser.id,
       read: false,
       createdAt: new Date().toISOString()
     });
+  });
+}
+
+// 지각/결석이 확정된 학생의 매장 리더+같은 매장 강사에게 1회 알림 (인앱, 비용 없음)
+function notifyAttendanceIssue(attRow, status) {
+  if (attRow.notified) return;
+  const student = db.getById('users', attRow.studentId);
+  if (!student) return;
+  const [templateId, date] = String(attRow.instanceKey).split('_');
+  const template = db.getById('timetable_templates', templateId);
+  const instructor = template && template.instructorId ? db.getById('users', template.instructorId) : null;
+  const targets = db.find('users', u => u.status === 'active' && ['admin', 'instructor'].includes(u.role) && String(u.regionId) === String(student.regionId));
+  const msg = `[${status}] ${date} ${attRow.period}교시 ${template ? (template.subject || template.title) : ''} (강사: ${instructor ? instructor.name : '-'}) - ${student.name}님 ${status} 확인`;
+  targets.forEach(t => {
+    db.insert('notifications', {
+      targetUserId: t.id, type: 'attendance_alert', message: msg, relatedUserId: student.id,
+      read: false, createdAt: new Date().toISOString()
+    });
+  });
+  db.update('attendance', attRow.id, { notified: true });
+}
+
+// template의 레벨/매장에 해당하는 재원생 목록
+function getEnrolledStudents(template) {
+  if (!template || !template.level) return [];
+  let list = db.find('users', u => u.role === 'student' && u.status === 'active');
+  if (template.regionId) list = list.filter(s => String(s.regionId) === String(template.regionId));
+  list = list.filter(s => s.profile && ((s.profile.levels || []).includes(template.level) || s.profile.level === template.level));
+  return list;
+}
+
+// 이전 교시 코드를 마감하고, 아직 출결 기록이 없는 재원생을 자동 결석 처리한다.
+function finalizeCheckinCode(codeRow) {
+  db.update('checkin_codes', codeRow.id, { active: false });
+  const [templateId] = String(codeRow.instanceKey).split('_');
+  const template = db.getById('timetable_templates', templateId);
+  const enrolled = getEnrolledStudents(template);
+  enrolled.forEach(student => {
+    const already = db.findOne('attendance', a => a.instanceKey === codeRow.instanceKey && a.period === codeRow.period && a.studentId === student.id);
+    if (already) return;
+    const row = db.insert('attendance', {
+      instanceKey: codeRow.instanceKey, period: codeRow.period, studentId: student.id,
+      status: '결석', checkedBy: null, checkedAt: new Date().toISOString(), method: 'auto'
+    });
+    notifyAttendanceIssue(row, '결석');
   });
 }
 function safeUser(u) {
@@ -183,14 +246,25 @@ async function uploadSignupDoc(name, docLabel, file) {
 }
 
 async function handleSignup(body) {
-  const { role, phone, password, name, level, desiredDays, mbti, disc, career, joinPeriod, regionId, extra, idCardPhoto, bankbookPhoto } = body;
-  if (!['student', 'instructor'].includes(role)) return { status: 400, body: { error: '가입 가능한 역할이 아닙니다.' } };
+  const {
+    role, phone, password, name, depositorName, levels: rawLevels, level, desiredDays,
+    nationality, mbti, disc, career, firstWorkDate, debutMonth, regionId, extra,
+    tuitionDateConfirmed, idCardPhoto, bankbookPhoto
+  } = body;
+  if (!['student', 'instructor', 'admin'].includes(role)) return { status: 400, body: { error: '가입 가능한 역할이 아닙니다.' } };
   if (!phone || !password || !name) return { status: 400, body: { error: '필수 정보가 누락되었습니다.' } };
   if (db.findOne('users', u => u.phone === phone)) return { status: 400, body: { error: '이미 등록된 휴대폰 번호입니다.' } };
-  const levels = expandLevelSelection(level);
+  // 신규 가입 폼은 레벨을 복수선택 배열로 보낸다. 옛 폼(단일 문자열)이 오면 호환 처리.
+  const levels = Array.isArray(rawLevels) ? rawLevels.filter(Boolean) : expandLevelSelection(level);
+  const isForeigner = nationality === '외국인';
+  // 1-4Lv 신청자는 교육비 입금일 확인 체크박스를 체크해야 가입 가능 (강사/리더, 외국인 등은 해당 없음)
+  const needsTuitionCheck = role === 'student' && !isForeigner && levels.some(l => ['1레벨', '2레벨', '3레벨', '4레벨'].includes(l));
+  if (needsTuitionCheck && !tuitionDateConfirmed) {
+    return { status: 400, body: { error: '교육비 입금 날짜 확인 체크박스를 확인해주세요.' } };
+  }
 
   const [idCardUrl, bankbookUrl] = await Promise.all([
-    uploadSignupDoc(name, '신분증', idCardPhoto),
+    isForeigner ? Promise.resolve(null) : uploadSignupDoc(name, '신분증', idCardPhoto),
     uploadSignupDoc(name, '통장사본', bankbookPhoto)
   ]);
 
@@ -200,27 +274,37 @@ async function handleSignup(body) {
     status: 'pending', // pending -> active -> inactive(퇴사/숨김)
     createdAt: new Date().toISOString(),
     profile: {
-      level: levels[0] || null, levels, desiredDays: desiredDays || [], mbti: mbti || '', disc: disc || '',
-      career: career || '', joinPeriod: joinPeriod || '', extra: extra || '', idCardUrl, bankbookUrl
+      level: levels[0] || null, levels, desiredDays: desiredDays || [],
+      depositorName: depositorName || '', nationality: nationality || '내국인',
+      mbti: mbti || '', disc: disc || '', career: career || '',
+      firstWorkDate: firstWorkDate || '', firstWorkPeriod: yearQuarterLabel(firstWorkDate),
+      debutMonth: debutMonth || '', extra: extra || '', tuitionDateConfirmed: !!tuitionDateConfirmed,
+      idCardUrl, bankbookUrl
     }
   });
   notifyRegionAdminsOfSignup(user);
   const region = regionId ? db.getById('regions', regionId) : null;
-  google.appendSheetRow(role === 'student' ? '앱_수강생' : '앱_강사', [
-    new Date().toISOString(), name, phone, (region ? region.name : ''),
-    levels.join(','), career || '', idCardUrl || '', bankbookUrl || ''
+  const sheetTab = role === 'student' ? '앱_수강생' : role === 'instructor' ? '앱_강사' : '앱_리더';
+  google.appendSheetRow(sheetTab, [
+    new Date().toISOString(), name, depositorName || '', phone, (region ? region.name : ''),
+    levels.join(','), nationality || '내국인', career || '', idCardUrl || '', bankbookUrl || ''
   ]).catch(e => console.error('Sheet sync failed (signup):', e.message));
   return { status: 200, body: { user: safeUser(user) } };
 }
 
 async function handleLogin(body, res) {
-  const { phone, password } = body;
+  const { phone, password, remember } = body;
   const user = db.findOne('users', u => u.phone === phone);
   if (!user || !verifyPassword(password, user.passwordHash)) return { status: 401, body: { error: '휴대폰번호 또는 비밀번호가 올바르지 않습니다.' } };
   if (user.status === 'pending') return { status: 403, body: { error: '아직 승인 대기 중입니다. 관리자 승인 후 로그인할 수 있습니다.' } };
   if (user.status === 'inactive') return { status: 403, body: { error: '비활성화된 계정입니다.' } };
   const token = createSession(user.id);
-  res.setHeader('Set-Cookie', `sid=${token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${SESSION_TTL_MS / 1000}`);
+  // "자동로그인" 체크: 켜져있으면 14일 유지 쿠키, 꺼져있으면 브라우저 닫으면 사라지는 세션쿠키
+  // (서버쪽 세션 자체는 항상 14일 슬라이딩으로 저장해두므로, 자동로그인 껐다가 다시 켜져도 문제 없음)
+  const cookieAttrs = remember
+    ? `sid=${token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${SESSION_TTL_MS / 1000}`
+    : `sid=${token}; HttpOnly; Path=/; SameSite=Lax`;
+  res.setHeader('Set-Cookie', cookieAttrs);
   return { status: 200, body: { user: safeUser(user) } };
 }
 
@@ -290,14 +374,6 @@ const server = http.createServer(async (req, res) => {
       db.update('users', id, { passwordHash: hashPassword(temp), mustChangePassword: true });
       return sendJSON(res, 200, { tempPassword: temp });
     }
-    if (pathname === '/api/change-phone' && req.method === 'POST') {
-      const { newPhone } = body;
-      if (!newPhone || !newPhone.trim()) return sendJSON(res, 400, { error: '아이디(휴대폰번호)를 입력하세요.' });
-      const clean = newPhone.trim();
-      if (clean !== user.phone && db.findOne('users', u => u.phone === clean)) return sendJSON(res, 400, { error: '이미 사용 중인 아이디입니다.' });
-      db.update('users', user.id, { phone: clean });
-      return sendJSON(res, 200, { ok: true, phone: clean });
-    }
     if (pathname === '/api/change-password' && req.method === 'POST') {
       const { newPassword } = body;
       if (!newPassword || newPassword.length < 4) return sendJSON(res, 400, { error: '비밀번호는 4자 이상이어야 합니다.' });
@@ -359,15 +435,30 @@ const server = http.createServer(async (req, res) => {
     }
     if (pathname === '/api/staff' && req.method === 'GET') {
       // instructors + admins list (for assigning leader/instructor)
-      const staff = db.find('users', u => ['instructor', 'admin', 'region_rep', 'master'].includes(u.role) && u.status === 'active');
+      const staff = db.find('users', u => ['instructor', 'admin', 'master'].includes(u.role) && u.status === 'active');
       return sendJSON(res, 200, { staff: staff.map(safeUser) });
     }
 
-    // ---------- REGIONS ----------
+    // ---------- REGIONS (매장) ----------
     if (pathname === '/api/regions' && req.method === 'POST') {
-      if (user.role !== 'master') return sendJSON(res, 403, { error: '마스터만 지역을 추가할 수 있습니다.' });
-      const { name, lat, lng, address } = body;
-      const region = db.insert('regions', { name, lat, lng, address });
+      if (user.role !== 'master') return sendJSON(res, 403, { error: '마스터만 매장을 추가할 수 있습니다.' });
+      const { name, lat, lng, address, area, leaderName, paymentDueDay } = body;
+      const region = db.insert('regions', { name, lat: lat || null, lng: lng || null, address: address || '', area: area || '', leaderName: leaderName || '', paymentDueDay: paymentDueDay || null });
+      return sendJSON(res, 200, { region });
+    }
+    if (pathname.match(/^\/api\/regions\/\d+$/) && req.method === 'PUT') {
+      if (!canEditTimetable(user)) return sendJSON(res, 403, { error: '권한이 없습니다.' });
+      const id = pathname.split('/')[3];
+      const { name, lat, lng, address, area, leaderName, paymentDueDay } = body;
+      const patch = {};
+      if (name !== undefined) patch.name = name;
+      if (lat !== undefined) patch.lat = lat === '' ? null : Number(lat);
+      if (lng !== undefined) patch.lng = lng === '' ? null : Number(lng);
+      if (address !== undefined) patch.address = address;
+      if (area !== undefined) patch.area = area;
+      if (leaderName !== undefined) patch.leaderName = leaderName;
+      if (paymentDueDay !== undefined) patch.paymentDueDay = paymentDueDay === '' ? null : Number(paymentDueDay);
+      const region = db.update('regions', id, patch);
       return sendJSON(res, 200, { region });
     }
 
@@ -430,6 +521,57 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, 200, { ok: true });
     }
 
+    // ---------- 전국 해피니언 스케줄 (매장과 무관한 전국 공통 일정) ----------
+    if (pathname === '/api/national-schedule' && req.method === 'GET') {
+      const year = Number(query.year), month = Number(query.month);
+      const nDays = daysInMonth(year, month);
+      const weeklyEvents = [];
+      const WEEKLY = [
+        { weekday: 1, title: '전국 리더 줌미팅', start: '09:00', end: '10:00' },   // 월
+        { weekday: 2, title: '전국 하퍼 줌미팅', start: '09:00', end: '10:00' },   // 화
+        { weekday: 6, title: '전국 천호장 줌미팅', start: '21:00', end: '22:00' }  // 토
+      ];
+      for (let d = 1; d <= nDays; d++) {
+        const dt = new Date(year, month - 1, d);
+        const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+        WEEKLY.forEach(w => { if (dt.getDay() === w.weekday) weeklyEvents.push({ date: dateStr, title: w.title, start: w.start, end: w.end }); });
+      }
+      const monthKey = `${year}-${String(month).padStart(2, '0')}`;
+      const itariSetting = db.findOne('app_settings', s => s.key === `itari_meeting_${monthKey}`);
+      const circuit = masterCircuitSchedule(year, month).filter(c => c.date.slice(0, 7) === monthKey);
+      return sendJSON(res, 200, {
+        weeklyEvents,
+        itariMeeting: itariSetting ? { date: itariSetting.value, title: '한국 이타리더단 미팅', start: '13:00', end: '18:00' } : null,
+        circuit
+      });
+    }
+    if (pathname === '/api/national-schedule/itari-meeting' && req.method === 'POST') {
+      if (!canEditTimetable(user)) return sendJSON(res, 403, { error: '권한이 없습니다.' });
+      const { year, month, date } = body;
+      const monthKey = `${year}-${String(month).padStart(2, '0')}`;
+      const key = `itari_meeting_${monthKey}`;
+      const existing = db.findOne('app_settings', s => s.key === key);
+      if (existing) db.update('app_settings', existing.id, { value: date });
+      else db.insert('app_settings', { key, value: date });
+      return sendJSON(res, 200, { ok: true });
+    }
+    // 마스터/관리자용 할일 알림 (예: 이타리더단 미팅 날짜 미설정 - 매월 마지막 주 토요일까지)
+    if (pathname === '/api/todos' && req.method === 'GET') {
+      if (!['master', 'admin'].includes(user.role)) return sendJSON(res, 200, { todos: [] });
+      const todos = [];
+      const now = new Date();
+      const y = now.getFullYear(), m = now.getMonth() + 1;
+      const lastSat = lastSaturdayOfMonth(y, m);
+      if (lastSat && todayStr() >= lastSat) {
+        const key = `itari_meeting_${y}-${String(m).padStart(2, '0')}`;
+        const setting = db.findOne('app_settings', s => s.key === key);
+        if (!setting || !setting.value) {
+          todos.push({ type: 'itari_meeting_unset', message: `${y}년 ${m}월 한국 이타리더단 미팅 날짜가 아직 설정되지 않았습니다. (매월 마지막 주 토요일까지 설정)` });
+        }
+      }
+      return sendJSON(res, 200, { todos });
+    }
+
     // ---------- ATTENDANCE ----------
     if (pathname === '/api/attendance' && req.method === 'GET') {
       const instanceKey = query.instanceKey;
@@ -437,7 +579,7 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, 200, { attendance: rows });
     }
     if (pathname === '/api/attendance/check' && req.method === 'POST') {
-      if (!['master', 'region_rep', 'admin', 'instructor'].includes(user.role)) return sendJSON(res, 403, { error: '권한이 없습니다.' });
+      if (!['master', 'admin', 'instructor'].includes(user.role)) return sendJSON(res, 403, { error: '권한이 없습니다.' });
       const { instanceKey, period, studentId, status } = body;
       const VALID = ['출석', '보강', '지각', '조퇴', '병결', '행사', '결석'];
       if (!VALID.includes(status)) return sendJSON(res, 400, { error: '유효하지 않은 출석 상태입니다.' });
@@ -445,39 +587,49 @@ const server = http.createServer(async (req, res) => {
       let row;
       if (existing) row = db.update('attendance', existing.id, { status, checkedBy: user.id, checkedAt: new Date().toISOString(), method: 'manual' });
       else row = db.insert('attendance', { instanceKey, period, studentId, status, checkedBy: user.id, checkedAt: new Date().toISOString(), method: 'manual' });
+      if (['지각', '결석'].includes(status)) notifyAttendanceIssue(row, status);
       const student = db.getById('users', studentId);
       google.appendSheetRow('앱_출석', [
         new Date().toISOString(), (student ? student.name : studentId), instanceKey, period, status, user.name
       ]).catch(e => console.error('Sheet sync failed (attendance):', e.message));
       return sendJSON(res, 200, { attendance: row });
     }
-    // rotating check-in code (QR substitute; encode as a QR image client-side pointing to a URL with this code)
+    // 교시별 출석 인증 코드. 만료 시간을 두지 않고, 강사가 다음 교시(혹은 다음 코드)를 발급하는
+    // 시점까지 계속 유효하다 (수업 진행 속도가 강사마다 달라 고정 시각으로 마감할 수 없기 때문).
+    // 발급 후 60초 안에 제출하면 출석, 넘으면 지각. 새 코드가 발급되면 이전 교시 미제출자는 자동 결석.
     if (pathname === '/api/attendance/checkin-code/generate' && req.method === 'POST') {
-      if (!['master', 'region_rep', 'admin', 'instructor'].includes(user.role)) return sendJSON(res, 403, { error: '권한이 없습니다.' });
+      if (!['master', 'admin', 'instructor'].includes(user.role)) return sendJSON(res, 403, { error: '권한이 없습니다.' });
       const { instanceKey, period, regionId } = body;
+      // 같은 수업(instanceKey)에서 진행 중이던 이전 교시 코드가 있으면 마감 처리(미제출자 자동 결석)
+      const prevActive = db.find('checkin_codes', c => c.instanceKey === instanceKey && c.active !== false && c.period !== period);
+      prevActive.forEach(finalizeCheckinCode);
       const code = randomCode(6);
       const row = db.insert('checkin_codes', {
         instanceKey, period, regionId, code,
-        expiresAt: Date.now() + CHECKIN_CODE_TTL_MS, createdBy: user.id
+        issuedAt: Date.now(), active: true, createdBy: user.id
       });
-      return sendJSON(res, 200, { code: row.code, expiresAt: row.expiresAt, ttlMs: CHECKIN_CODE_TTL_MS });
+      return sendJSON(res, 200, { code: row.code, issuedAt: row.issuedAt, lateAfterMs: LATE_THRESHOLD_MS });
     }
     if (pathname === '/api/attendance/checkin-code/submit' && req.method === 'POST') {
       if (user.role !== 'student') return sendJSON(res, 403, { error: '수강생만 사용할 수 있습니다.' });
       const { code, lat, lng } = body;
-      const session = [...db.all('checkin_codes')].reverse().find(c => c.code === code);
-      if (!session) return sendJSON(res, 400, { error: '유효하지 않은 코드입니다.' });
-      if (Date.now() > session.expiresAt) return sendJSON(res, 400, { error: '코드가 만료되었습니다. (1분 유효)' });
+      const session = [...db.all('checkin_codes')].reverse().find(c => c.code === code && c.active !== false);
+      if (!session) return sendJSON(res, 400, { error: '유효하지 않거나 마감된 코드입니다. 강사에게 다시 확인하세요.' });
       if (lat === undefined || lng === undefined) return sendJSON(res, 400, { error: '위치 정보가 필요합니다.' });
       const region = db.getById('regions', session.regionId);
-      if (!region || region.lat === undefined || region.lng === undefined) return sendJSON(res, 400, { error: '지점 위치 정보가 설정되지 않았습니다.' });
+      if (!region || region.lat === undefined || region.lat === null || region.lng === undefined || region.lng === null) {
+        return sendJSON(res, 400, { error: '지점 위치 정보가 아직 설정되지 않았습니다. 관리자에게 매장 GPS 좌표 등록을 요청하세요.' });
+      }
       const dist = distanceMeters(lat, lng, region.lat, region.lng);
       if (dist > CHECKIN_RADIUS_M) return sendJSON(res, 400, { error: `학원 위치에서 너무 멉니다 (약 ${Math.round(dist)}m). 강사에게 수동 체크를 요청하세요.` });
+      const isLate = (Date.now() - session.issuedAt) > LATE_THRESHOLD_MS;
+      const status = isLate ? '지각' : '출석';
       const existing = db.findOne('attendance', a => a.instanceKey === session.instanceKey && a.period === session.period && a.studentId === user.id);
       let row;
-      const payload = { status: '출석', checkedBy: user.id, checkedAt: new Date().toISOString(), method: 'checkin_code' };
+      const payload = { status, checkedBy: user.id, checkedAt: new Date().toISOString(), method: 'checkin_code' };
       if (existing) row = db.update('attendance', existing.id, payload);
       else row = db.insert('attendance', Object.assign({ instanceKey: session.instanceKey, period: session.period, studentId: user.id }, payload));
+      if (isLate) notifyAttendanceIssue(row, '지각');
       return sendJSON(res, 200, { attendance: row });
     }
     if (pathname === '/api/attendance/stats' && req.method === 'GET') {
@@ -487,6 +639,10 @@ const server = http.createServer(async (req, res) => {
       if (query.level) students = students.filter(s => s.profile && ((s.profile.levels || []).includes(query.level) || s.profile.level === query.level));
       if (query.studentId) students = students.filter(s => String(s.id) === String(query.studentId));
       const allAttendance = db.all('attendance');
+      const EXAM_MONTHS = [3, 6, 9, 12];
+      const thresholdSetting = db.findOne('app_settings', s => s.key === 'exam_attendance_threshold');
+      const threshold = thresholdSetting ? Number(thresholdSetting.value) : null; // null = 아직 미설정, 경고 없음
+      const isExamMonth = EXAM_MONTHS.includes(new Date().getMonth() + 1);
       const stats = students.map(s => {
         const rows = allAttendance.filter(a => a.studentId === s.id);
         const total = rows.length;
@@ -494,9 +650,59 @@ const server = http.createServer(async (req, res) => {
         rows.forEach(r => { if (counts[r.status] !== undefined) counts[r.status]++; });
         const percents = {};
         STATUSES.forEach(st => percents[st] = total ? Math.round((counts[st] / total) * 1000) / 10 : 0);
-        return { student: safeUser(s), total, counts, percents };
+        const examWarning = !!(threshold !== null && isExamMonth && total && percents['출석'] < threshold);
+        return { student: safeUser(s), total, counts, percents, examWarning, examThreshold: threshold };
       });
-      return sendJSON(res, 200, { stats });
+      return sendJSON(res, 200, { stats, examThreshold: threshold, isExamMonth });
+    }
+
+    // ---------- 설정값 (마스터 전용 - 진화시험 출석률 기준 등, 임의로 값을 만들지 않고 마스터가 직접 입력) ----------
+    if (pathname.match(/^\/api\/settings\/[\w-]+$/) && req.method === 'GET') {
+      const key = pathname.split('/')[3];
+      const row = db.findOne('app_settings', s => s.key === key);
+      return sendJSON(res, 200, { key, value: row ? row.value : null });
+    }
+    if (pathname.match(/^\/api\/settings\/[\w-]+$/) && req.method === 'POST') {
+      if (user.role !== 'master') return sendJSON(res, 403, { error: '마스터만 설정을 변경할 수 있습니다.' });
+      const key = pathname.split('/')[3];
+      const { value } = body;
+      const row = db.findOne('app_settings', s => s.key === key);
+      if (row) db.update('app_settings', row.id, { value });
+      else db.insert('app_settings', { key, value });
+      return sendJSON(res, 200, { key, value });
+    }
+
+    // ---------- 수업종료(class session) ----------
+    if (pathname === '/api/class-sessions/end' && req.method === 'POST') {
+      if (!['master', 'admin', 'instructor'].includes(user.role)) return sendJSON(res, 403, { error: '권한이 없습니다.' });
+      const { instanceKey, period } = body;
+      const existing = db.findOne('class_sessions', c => c.instanceKey === instanceKey && c.period === period);
+      const row = existing
+        ? db.update('class_sessions', existing.id, { endedAt: new Date().toISOString(), endedBy: user.id })
+        : db.insert('class_sessions', { instanceKey, period, endedAt: new Date().toISOString(), endedBy: user.id });
+      return sendJSON(res, 200, { session: row });
+    }
+    if (pathname === '/api/class-sessions' && req.method === 'GET') {
+      const rows = query.instanceKey ? db.find('class_sessions', c => c.instanceKey === query.instanceKey) : db.all('class_sessions');
+      return sendJSON(res, 200, { sessions: rows });
+    }
+    // 오늘 종료된 수업 중, 나(강사)의 피드백이 아직 다 안 채워진 수강생 수 (당일 완료 유도 배너용)
+    if (pathname === '/api/feedback/pending-today' && req.method === 'GET') {
+      if (!canWriteInstructorFeedback(user)) return sendJSON(res, 200, { pending: 0, items: [] });
+      const today = todayStr();
+      const endedToday = db.find('class_sessions', c => c.endedBy === user.id && String(c.endedAt || '').slice(0, 10) === today);
+      const fb = db.all('feedback_instructor');
+      const items = [];
+      endedToday.forEach(sess => {
+        const [templateId] = String(sess.instanceKey).split('_');
+        const template = db.getById('timetable_templates', templateId);
+        const enrolled = getEnrolledStudents(template);
+        enrolled.forEach(stu => {
+          const has = fb.some(f => f.instanceKey === sess.instanceKey && String(f.studentId) === String(stu.id) && String(f.authorId) === String(user.id));
+          if (!has) items.push({ instanceKey: sess.instanceKey, period: sess.period, studentId: stu.id, studentName: stu.name });
+        });
+      });
+      return sendJSON(res, 200, { pending: items.length, items });
     }
 
     // ---------- FEEDBACK: instructor/leader -> student ----------
@@ -582,10 +788,21 @@ const server = http.createServer(async (req, res) => {
       if (!assignment) return sendJSON(res, 404, { error: '과제를 찾을 수 없습니다.' });
       let storedPath = null;
       if (type === 'file' && fileData) {
-        const buf = Buffer.from(fileData, 'base64');
-        const safeName = `${Date.now()}_${user.id}_${(fileName || 'file').replace(/[^a-zA-Z0-9._-]/g, '_')}`;
-        fs.writeFileSync(path.join(UPLOAD_DIR, safeName), buf);
-        storedPath = `/uploads/${safeName}`;
+        // Render 등 무료 호스팅은 로컬 디스크가 재배포/재시작 시 초기화되므로, 제출 파일은
+        // 로컬 대신 구글 드라이브에 저장하고 그 링크를 취합 시트/제출현황에 남긴다.
+        const ext = (fileName && fileName.includes('.')) ? fileName.split('.').pop() : 'dat';
+        const driveFileName = `${user.name}_${assignment.title}_${todayStr().replace(/-/g, '')}.${ext}`;
+        try {
+          const uploaded = await google.uploadToDrive(driveFileName, 'application/octet-stream', fileData);
+          storedPath = uploaded ? uploaded.webViewLink : null;
+        } catch (e) { console.error('과제 파일 드라이브 업로드 실패:', e.message); }
+        if (!storedPath) {
+          // 구글 연동이 안 되어있을 때를 위한 폴백 (로컬 저장, 재배포 시 유실될 수 있음)
+          const buf = Buffer.from(fileData, 'base64');
+          const safeName = `${Date.now()}_${user.id}_${(fileName || 'file').replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+          fs.writeFileSync(path.join(UPLOAD_DIR, safeName), buf);
+          storedPath = `/uploads/${safeName}`;
+        }
       }
       const existing = db.findOne('assignment_submissions', s => s.assignmentId === assignmentId && s.studentId === user.id);
       const payload = {
@@ -595,6 +812,9 @@ const server = http.createServer(async (req, res) => {
       let row;
       if (existing) row = db.update('assignment_submissions', existing.id, payload);
       else row = db.insert('assignment_submissions', Object.assign({ assignmentId, studentId: user.id }, payload));
+      google.appendSheetRow('앱_과제제출', [
+        new Date().toISOString(), assignment.title, user.name, type, payload.content || '', comment || ''
+      ]).catch(e => console.error('Sheet sync failed (assignment submit):', e.message));
       return sendJSON(res, 200, { submission: row });
     }
     if (pathname === '/api/notifications/mine' && req.method === 'GET') {
@@ -609,16 +829,25 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, 200, { ok: true });
     }
     if (pathname === '/api/notifications/assignments' && req.method === 'GET') {
-      // D-1 / D-2 reminders relevant to current user
+      // D-1 / D-2 마감 임박 알림. 대상: 수강생 본인, 과제를 등록한 강사/관리자, 대상 수강생의 매장 리더
       const rows = db.all('assignments');
       const today = new Date(todayStr());
       const relevant = rows.filter(a => {
-        if (user.role === 'student' && a.level && !((user.profile && user.profile.levels) || []).includes(a.level)) return false;
-        const dl = new Date(a.deadline);
+        const dl = new Date((a.deadline || '').slice(0, 10));
         const diffDays = Math.round((dl - today) / (1000 * 60 * 60 * 24));
-        return diffDays === 1 || diffDays === 2 || diffDays === 0;
+        if (diffDays !== 0 && diffDays !== 1 && diffDays !== 2) return false;
+        if (user.role === 'student') {
+          return !a.level || ((user.profile && user.profile.levels) || []).includes(a.level);
+        }
+        if (String(a.createdBy) === String(user.id)) return true; // 등록한 강사/관리자 본인
+        if (user.role === 'admin') {
+          // 이 매장 소속 수강생이 대상인 과제인지 (지역 지정이 있으면 지역으로, 없으면 레벨로 판단)
+          if (a.regionId) return String(a.regionId) === String(user.regionId);
+          return true;
+        }
+        return false;
       }).map(a => {
-        const dl = new Date(a.deadline);
+        const dl = new Date((a.deadline || '').slice(0, 10));
         const diffDays = Math.round((dl - today) / (1000 * 60 * 60 * 24));
         return Object.assign({}, a, { dDay: diffDays });
       });
@@ -671,6 +900,48 @@ const server = http.createServer(async (req, res) => {
       const { studentId, amount, reason } = body;
       const row = db.insert('refunds', { studentId, amount, reason, processedBy: user.id, processedAt: new Date().toISOString() });
       return sendJSON(res, 200, { refund: row });
+    }
+
+    // ---------- 월별 회비 현황 (자동 생성) ----------
+    // 1-4Lv/강사코스/세미나 대상 재원생에 대해 매달 항목을 자동으로 만들어둔다. 금액은 임의로
+    // 정하지 않고 비워둔 채 생성하며, 관리자가 직접 입력/확인만 하면 된다.
+    if (pathname === '/api/monthly-dues' && req.method === 'GET') {
+      if (!canManagePayments(user)) return sendJSON(res, 403, { error: '권한이 없습니다.' });
+      const month = query.month || todayStr().slice(0, 7);
+      let students = db.find('users', u => u.role === 'student' && u.status === 'active');
+      students = students.filter(s => s.profile && (s.profile.levels || []).some(l => BILLABLE_LEVELS.includes(l)));
+      if (query.regionId) students = students.filter(s => String(s.regionId) === String(query.regionId));
+      students.forEach(s => {
+        const exists = db.findOne('monthly_dues', d => d.month === month && String(d.studentId) === String(s.id));
+        if (exists) return;
+        const region = s.regionId ? db.getById('regions', s.regionId) : null;
+        let dueDate = null;
+        if (region && region.paymentDueDay) {
+          dueDate = `${month}-${String(region.paymentDueDay).padStart(2, '0')}`;
+        }
+        db.insert('monthly_dues', {
+          month, studentId: s.id, regionId: s.regionId || null, dueDate,
+          amount: null, paid: false, paidDate: null, updatedBy: null, updatedAt: new Date().toISOString()
+        });
+      });
+      let rows = db.find('monthly_dues', d => d.month === month);
+      if (query.regionId) rows = rows.filter(d => String(d.regionId) === String(query.regionId));
+      rows = rows.map(d => {
+        const s = db.getById('users', d.studentId);
+        return Object.assign({}, d, { studentName: s ? s.name : '', levels: s && s.profile ? s.profile.levels : [], regionName: (d.regionId && db.getById('regions', d.regionId) || {}).name || '' });
+      });
+      return sendJSON(res, 200, { dues: rows });
+    }
+    if (pathname.match(/^\/api\/monthly-dues\/\d+$/) && req.method === 'POST') {
+      if (!canManagePayments(user)) return sendJSON(res, 403, { error: '권한이 없습니다.' });
+      const id = pathname.split('/')[3];
+      const { amount, paid, paidDate, dueDate } = body;
+      const patch = { updatedBy: user.id, updatedAt: new Date().toISOString() };
+      if (amount !== undefined) patch.amount = amount === '' ? null : Number(amount);
+      if (dueDate !== undefined) patch.dueDate = dueDate;
+      if (paid !== undefined) { patch.paid = !!paid; patch.paidDate = paid ? (paidDate || todayStr()) : null; }
+      const row = db.update('monthly_dues', id, patch);
+      return sendJSON(res, 200, { due: row });
     }
 
     return sendJSON(res, 404, { error: 'Not found' });

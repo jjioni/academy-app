@@ -1,15 +1,31 @@
-// Seeds a starter master account, one region, and a basic timetable template.
-// Run once: `npm run seed` (safe to re-run; skips if master already exists).
+// 마스터 계정 + 매장(지역) 목록만 시드로 만들어둔다.
+// 리더(관리자) 계정은 각자 회원가입 -> 마스터 승인으로 생성하는 방식으로 정했으므로
+// 여기서 임의로 계정을 만들지 않는다. 시간표 기본틀, 과목, 강사 배정도 마찬가지로
+// 실제 운영자가 직접 입력해야 하는 값이라 여기서 채우지 않는다.
+// Run once: `npm run seed` (safe to re-run; skips if data already exists).
 const db = require('./lib/db');
 const { hashPassword } = require('./lib/auth');
 
-function run() {
-  let region = db.findOne('regions', r => r.name === '압구정');
-  if (!region) {
-    region = db.insert('regions', { name: '압구정', address: '서울 강남구 압구정로 332', lat: 37.5274, lng: 127.0400 });
-    console.log('region created:', region.name);
-  }
+// 지원님이 알려준 실제 매장/리더 목록. 주소·GPS좌표·입금예정일(수원/인천)은 아직 정해지지
+// 않은 값이라 비워두고, 대시보드의 "매장 관리" 화면에서 직접 입력/수정할 수 있게 한다.
+const STORES = [
+  { area: '강남', name: '압구정 플래그십', leaderName: '엘맘', paymentDueDay: 10 },
+  { area: '강남', name: '압구정 로데오역', leaderName: '헤더', paymentDueDay: 10 },
+  { area: '강남', name: '압구정 엘', leaderName: '조이', paymentDueDay: 10 },
+  { area: '강남', name: '강남구청 스타트', leaderName: '테리', paymentDueDay: 10 },
+  { area: '강남', name: '강남 이도', leaderName: '이도사', paymentDueDay: 10 },
+  { area: '강남', name: '강남 모나코', leaderName: '이타', paymentDueDay: 10 },
+  { area: '강남', name: '강남 미라클', leaderName: '건', paymentDueDay: 10 },
+  { area: '강남', name: '강남 시크릿', leaderName: '하이', paymentDueDay: 10 },
+  { area: '강서', name: '강서 우장산', leaderName: '슬기', paymentDueDay: 10 },
+  { area: '강서', name: '강서 마곡', leaderName: '강윤', paymentDueDay: 10 },
+  { area: '강서', name: '강서 발산', leaderName: '윈터', paymentDueDay: 10 },
+  { area: '강서', name: '강서 우장마음', leaderName: '고맘', paymentDueDay: 10 },
+  { area: '수원', name: '수원시청', leaderName: '선주', paymentDueDay: null },
+  { area: '인천', name: '구월우리', leaderName: '우리', paymentDueDay: null }
+];
 
+function run() {
   // NOTE: master ID/password below are the requested credentials (happynian).
   // This block upserts so a redeploy always keeps the master account in sync,
   // even on Render's free tier where the data file can reset.
@@ -28,48 +44,17 @@ function run() {
     console.log(`master account synced — id: ${MASTER_PHONE} / password: ${MASTER_PASSWORD}`);
   }
 
-  let regionRep = db.findOne('users', u => u.role === 'region_rep' && u.regionId === region.id);
-  if (!regionRep) {
-    regionRep = db.insert('users', {
-      role: 'region_rep', phone: '01011111111', passwordHash: hashPassword('rep1234'),
-      name: '압구정 지역대표', regionId: region.id, status: 'active', createdAt: new Date().toISOString(),
-      profile: {}
+  let createdCount = 0;
+  STORES.forEach(s => {
+    const exists = db.findOne('regions', r => r.name === s.name);
+    if (exists) return;
+    db.insert('regions', {
+      name: s.name, area: s.area, leaderName: s.leaderName, paymentDueDay: s.paymentDueDay,
+      address: '', lat: null, lng: null
     });
-    console.log('region_rep account created — phone: 01011111111 / password: rep1234');
-  }
-
-  let admin = db.findOne('users', u => u.role === 'admin' && u.regionId === region.id);
-  if (!admin) {
-    admin = db.insert('users', {
-      role: 'admin', phone: '01022222222', passwordHash: hashPassword('admin1234'),
-      name: '압구정 관리자', regionId: region.id, status: 'active', createdAt: new Date().toISOString(),
-      profile: {}
-    });
-    console.log('admin account created — phone: 01022222222 / password: admin1234');
-  }
-
-  // 시간표 틀(요일/레벨/시간)만 기본 제공. 과목명·강사 배정은 실제 운영자가
-  // 관리자 화면(시간표 관리)에서 직접 입력해야 하므로 빈 값으로 둔다 — 임의로 채우지 않음.
-  const templates = db.find('timetable_templates', t => t.regionId === region.id);
-  if (!templates.length) {
-    // 학원은 월~목만 운영, 요일별로 레벨 2~3개가 함께 돌아간다 (예: 월 = 1,3레벨 + 가끔 강사코스)
-    const rows = [
-      { level: '1레벨', weekday: '월', startTime: '10:00', endTime: '18:00', room: '', regionId: region.id, isInternal: false, title: '1레벨', subject: '', instructorId: null },
-      { level: '3레벨', weekday: '월', startTime: '10:00', endTime: '18:00', room: '', regionId: region.id, isInternal: false, title: '3레벨', subject: '', instructorId: null },
-      { level: '2레벨', weekday: '화', startTime: '10:00', endTime: '18:00', room: '', regionId: region.id, isInternal: false, title: '2레벨', subject: '', instructorId: null },
-      { level: '4레벨', weekday: '화', startTime: '10:00', endTime: '18:00', room: '', regionId: region.id, isInternal: false, title: '4레벨', subject: '', instructorId: null },
-      { level: '강사코스-이나모리', weekday: '화', startTime: '10:00', endTime: '18:00', room: '', regionId: region.id, isInternal: false, title: '강사코스-이나모리반', subject: '', instructorId: null },
-      { level: '1레벨', weekday: '수', startTime: '10:00', endTime: '18:00', room: '', regionId: region.id, isInternal: false, title: '1레벨', subject: '', instructorId: null },
-      { level: '3레벨', weekday: '수', startTime: '10:00', endTime: '18:00', room: '', regionId: region.id, isInternal: false, title: '3레벨', subject: '', instructorId: null },
-      { level: '강사코스-머스크', weekday: '수', startTime: '10:00', endTime: '18:00', room: '', regionId: region.id, isInternal: false, title: '강사코스-머스크반', subject: '', instructorId: null },
-      { level: '2레벨', weekday: '목', startTime: '10:00', endTime: '18:00', room: '', regionId: region.id, isInternal: false, title: '2레벨', subject: '', instructorId: null },
-      { level: '4레벨', weekday: '목', startTime: '10:00', endTime: '18:00', room: '', regionId: region.id, isInternal: false, title: '4레벨', subject: '', instructorId: null },
-      { level: null, weekday: '월', startTime: '09:00', endTime: '10:00', room: '', regionId: region.id, isInternal: true, title: '리더 줌미팅', subject: '', instructorId: null },
-      { level: null, weekday: '화', startTime: '09:00', endTime: '10:00', room: '', regionId: region.id, isInternal: true, title: '하이퍼포머 줌미팅', subject: '', instructorId: null }
-    ];
-    rows.forEach(r => db.insert('timetable_templates', r));
-    console.log(`timetable templates seeded: ${rows.length}`);
-  }
+    createdCount++;
+  });
+  if (createdCount) console.log(`매장(지역) ${createdCount}개 등록됨 (주소/GPS좌표는 매장 관리 화면에서 입력 필요)`);
 
   console.log('\nSeed complete.');
 }

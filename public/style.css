@@ -65,6 +65,11 @@ th { color: var(--muted); font-weight: 600; background: #fafbfc; }
 .day-cell .date-num { font-weight: 700; margin-bottom: 2px; font-size: 13px; }
 .day-cell.today { border-color: var(--accent); border-width: 2px; }
 .day-cell.weekend-empty { background: #fafbfc; }
+/* 학원은 월~목 위주로 운영되므로 금/토/일 칸은 기본적으로 작게 표시 (내용이 있으면 자동으로 늘어남) */
+.day-cell.weekend { min-height: 60px; font-size: 11px; }
+.day-cell.weekend .date-num { font-size: 12px; opacity: .7; }
+.lv-edit { float: right; cursor: pointer; opacity: .5; font-size: 11px; }
+.lv-edit:hover { opacity: 1; }
 .day-item {
   border-radius: 8px; padding: 6px 8px; cursor: pointer; line-height: 1.4;
   background: #fff; border: 1px solid var(--border); border-left: 4px solid var(--level-border, var(--accent));
