@@ -4,11 +4,11 @@
       "id": 1,
       "role": "master",
       "phone": "happynian",
-      "passwordHash": "05d4c3c29ceb997ff056a26acbb08a1f:9aabfcab2de510dfea1b5010c7ba15101509161aef0db0f501e8a829e92879e23187d045c08a5ba109744948b27d546b94626381520fb887c2e56d546c0e7fe1",
+      "passwordHash": "94195a267b0f05d5c51b1b60764dbc80:dd2391cff2b61f4e09d77e5fb4631906db9bc48da2bce386e6328745019afc9f419f9e68f70425d001d726e4a8f27bb72ce11ea57bb521a810c90fb6c379e458",
       "name": "마스터",
       "regionId": null,
       "status": "active",
-      "createdAt": "2026-08-13T14:42:41.199Z",
+      "createdAt": "2026-08-13T15:24:44.058Z",
       "profile": {}
     }
   ],
@@ -168,7 +168,28 @@
   "sessions": [],
   "monthly_dues": [],
   "class_sessions": [],
-  "app_settings": [],
+  "app_settings": [
+    {
+      "id": 1,
+      "key": "monthly_tuition_amount",
+      "value": 500000
+    },
+    {
+      "id": 2,
+      "key": "tuition_bank_account",
+      "value": "한국이타리더단강남협동조합 / KB국민은행 464801-01-220114"
+    }
+  ],
+  "academies": [
+    {
+      "id": 1,
+      "name": "강남 아카데미",
+      "address": "서울 강남구 압구정로 332 동도상가 지하 1층",
+      "lat": null,
+      "lng": null
+    }
+  ],
+  "model_work_logs": [],
   "_seq": {
     "users": 1,
     "regions": 14,
@@ -186,6 +207,8 @@
     "sessions": 0,
     "monthly_dues": 0,
     "class_sessions": 0,
-    "app_settings": 0
+    "app_settings": 2,
+    "academies": 1,
+    "model_work_logs": 0
   }
 }

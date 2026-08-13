@@ -74,10 +74,11 @@ th { color: var(--muted); font-weight: 600; background: #fafbfc; }
   border-radius: 8px; padding: 6px 8px; cursor: pointer; line-height: 1.4;
   background: #fff; border: 1px solid var(--border); border-left: 4px solid var(--level-border, var(--accent));
 }
+/* 레벨명은 한 줄로 고정, 나머지(과목/강사/메타)는 잘리지 않고 줄바꿈되도록 표시 */
 .day-item .lv-name { font-weight: 800; display: block; font-size: 13px; color: var(--level-text, var(--text)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.day-item .lv-subject { display: block; font-size: 11.5px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.day-item .lv-meta { display: block; color: var(--muted); font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.day-item .lv-teacher { display: block; font-size: 11px; font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.day-item .lv-subject { display: block; font-size: 11.5px; font-weight: 600; color: var(--text); white-space: normal; word-break: break-word; line-height: 1.3; }
+.day-item .lv-meta { display: block; color: var(--muted); font-size: 10.5px; white-space: normal; word-break: break-word; line-height: 1.3; }
+.day-item .lv-teacher { display: block; font-size: 11px; font-weight: 700; color: var(--text); white-space: normal; word-break: break-word; line-height: 1.3; }
 .day-item.internal { border-left-style: dashed; opacity: .85; background: #fafbfc; }
 .day-item.deadline { background: #fdecec; }
 .day-item.lunch-marker {

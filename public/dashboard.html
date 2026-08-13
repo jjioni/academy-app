@@ -23,6 +23,7 @@
 <script>
 let ME = null;
 let REGIONS = [];
+let ACADEMIES = [];
 const WEEKDAYS = ['일','월','화','수','목','금','토'];
 const STATUSES = ['출석','보강','지각','조퇴','병결','행사','결석'];
 
@@ -77,6 +78,7 @@ const TABS = [
   { key: 'approvals', label: '승인관리', show: () => canApprove() },
   { key: 'timetable-admin', label: '시간표 관리', show: () => canEditTimetable() },
   { key: 'stores', label: '매장 관리', show: () => isAtLeast_admin() },
+  { key: 'academies', label: '아카데미 관리', show: () => isAtLeast_admin() },
   { key: 'settings', label: '설정', show: () => ME.role === 'master' },
   { key: 'account', label: '내 정보' },
 ];
@@ -95,6 +97,7 @@ async function boot() {
   document.getElementById('roleBadge').textContent = `${ROLE_LABEL[ME.role]} · ${esc(ME.name)}`;
   const regionsRes = await api('/regions');
   REGIONS = regionsRes.regions;
+  try { const acRes = await api('/academies'); ACADEMIES = acRes.academies; } catch (e) { ACADEMIES = []; }
   document.getElementById('logoutBtn').onclick = async () => { await api('/logout', { method: 'POST' }); location.href = '/index.html'; };
   window.onhashchange = route;
   route();
@@ -108,7 +111,7 @@ function route() {
     home: renderTimetable, timetable: renderTimetable, attendance: renderAttendance, stats: renderStats,
     feedback: renderFeedback, assignments: renderAssignments, payments: renderPayments,
     approvals: renderApprovals, 'timetable-admin': renderTimetableAdmin, stores: renderStores,
-    settings: renderSettings, account: renderAccount
+    academies: renderAcademies, settings: renderSettings, account: renderAccount
   };
   (map[key] || renderTimetable)();
 }
@@ -156,7 +159,7 @@ async function markNotifsRead(ids) {
 }
 
 // ===================== 시간표 =====================
-let ttState = { year: new Date().getFullYear(), month: new Date().getMonth() + 1, showInternal: false, regionId: REGIONS[0] ? REGIONS[0].id : '' };
+let ttState = { year: new Date().getFullYear(), month: new Date().getMonth() + 1, showInternal: false, academyId: '' };
 
 // C안: 화이트 카드 + 컬러 탭. border = 탭 색(중간 채도), text = 레벨명 글씨색(진한 마카롱 톤)
 const LEVEL_COLOR_MAP = {
@@ -175,16 +178,17 @@ function colorForLevel(levelKey, titleKey) {
 }
 
 async function renderTimetable() {
+  if (!ttState.academyId && ACADEMIES.length) ttState.academyId = ACADEMIES[0].id;
   const content = document.getElementById('content');
   content.innerHTML = `<div class="page-title">아카데미 시간표</div><div class="page-sub">월별 시간표 · 내부일정 토글로 운영진 일정도 함께 확인</div>`;
   const card = document.createElement('div'); card.className = 'card';
-  const regionOpts = REGIONS.map(r => `<option value="${r.id}" ${String(r.id)===String(ttState.regionId)?'selected':''}>${esc(r.name)}</option>`).join('');
+  const academyOpts = ACADEMIES.map(a => `<option value="${a.id}" ${String(a.id)===String(ttState.academyId)?'selected':''}>${esc(a.name)}</option>`).join('');
   card.innerHTML = `
     <div class="month-nav">
       <button class="btn small ghost" id="prevM">‹</button>
       <div class="label" id="monthLabel"></div>
       <button class="btn small ghost" id="nextM">›</button>
-      <select id="regionSel" style="margin-left:12px">${regionOpts}</select>
+      <select id="academySel" style="margin-left:12px">${academyOpts || '<option value="">등록된 아카데미 없음</option>'}</select>
       <label class="check-toggle"><input type="checkbox" id="internalToggle" ${ttState.showInternal?'checked':''}/> 내부일정 보기</label>
       <button class="btn small ghost" id="nationalBtn" style="margin-left:auto">🌐 전국 해피니언 스케줄</button>
     </div>
@@ -196,11 +200,11 @@ async function renderTimetable() {
   document.getElementById('monthLabel').textContent = `${ttState.year}년 ${ttState.month}월`;
   document.getElementById('prevM').onclick = () => { ttState.month--; if (ttState.month < 1) { ttState.month = 12; ttState.year--; } renderTimetable(); };
   document.getElementById('nextM').onclick = () => { ttState.month++; if (ttState.month > 12) { ttState.month = 1; ttState.year++; } renderTimetable(); };
-  document.getElementById('regionSel').onchange = (e) => { ttState.regionId = e.target.value; renderTimetable(); };
+  document.getElementById('academySel').onchange = (e) => { ttState.academyId = e.target.value; renderTimetable(); };
   document.getElementById('internalToggle').onchange = (e) => { ttState.showInternal = e.target.checked; renderTimetable(); };
   document.getElementById('nationalBtn').onclick = openNationalScheduleModal;
 
-  const { days } = await api(`/timetable/month?year=${ttState.year}&month=${ttState.month}&regionId=${ttState.regionId}&showInternal=${ttState.showInternal}`);
+  const { days } = await api(`/timetable/month?year=${ttState.year}&month=${ttState.month}&academyId=${ttState.academyId}&showInternal=${ttState.showInternal}`);
   const grid = document.getElementById('grid');
   const dowHtml = WEEKDAYS.map(w => `<div class="dow">${w}</div>`).join('');
   const firstDow = new Date(ttState.year, ttState.month - 1, 1).getDay();
@@ -307,7 +311,8 @@ async function renderAttendance() {
 
   if (!canCheckAttendance()) { content.innerHTML += `<div class="card">권한이 없습니다.</div>`; return; }
 
-  const { days } = await api(`/timetable/month?year=${ttState.year}&month=${ttState.month}&regionId=${ttState.regionId||REGIONS[0].id}&showInternal=false`);
+  if (!ttState.academyId && ACADEMIES.length) ttState.academyId = ACADEMIES[0].id;
+  const { days } = await api(`/timetable/month?year=${ttState.year}&month=${ttState.month}&academyId=${ttState.academyId}&showInternal=false`);
   const allItems = [];
   days.forEach(d => d.items.forEach(it => allItems.push(Object.assign({}, it, { date: d.date }))));
   const picked = window._pendingInstanceKey ? allItems.find(i => i.instanceKey === window._pendingInstanceKey) : allItems[0];
@@ -399,9 +404,8 @@ async function setAttendance(instanceKey, period, studentId, status) {
 }
 
 async function genCheckinCode(instanceKey) {
-  const regionId = ttState.regionId || REGIONS[0].id;
   const period = Number(document.getElementById('codePeriodSel').value);
-  const { code, lateAfterMs } = await api('/attendance/checkin-code/generate', { method: 'POST', body: JSON.stringify({ instanceKey, period, regionId }) });
+  const { code, lateAfterMs } = await api('/attendance/checkin-code/generate', { method: 'POST', body: JSON.stringify({ instanceKey, period }) });
   const el = document.getElementById('codeDisplay');
   let remain = Math.floor(lateAfterMs / 1000);
   el.innerHTML = `<span class="qr-code-num" style="font-size:22px">${code}</span> <span class="muted">(출석 인정 앞으로 ${remain}초, 이후 지각 처리)</span>`;
@@ -473,6 +477,19 @@ function renderStatsTable(stats) {
 async function renderStats() {
   const content = document.getElementById('content');
   content.innerHTML = `<div class="page-title">출석 통계</div><div class="page-sub">레벨별 필터 · 상태별 비율 및 횟수</div>`;
+
+  if (isAtLeast_admin()) {
+    const storeCard = document.createElement('div'); storeCard.className = 'card';
+    storeCard.innerHTML = `<h3>매장별 출석률</h3><div id="storeStats">불러오는 중...</div>`;
+    content.appendChild(storeCard);
+    api('/attendance/stats-by-store').then(({ byStore }) => {
+      const withData = byStore.filter(s => s.total > 0);
+      document.getElementById('storeStats').innerHTML = withData.length ? `<table><thead><tr><th>매장</th><th>인원</th><th>총 기록</th><th>출석률</th><th>결석률</th><th>지각률</th></tr></thead><tbody>
+        ${withData.map(s => `<tr><td>${esc(s.regionName)}</td><td>${s.studentCount}</td><td>${s.total}</td><td>${s.percents['출석']}%</td><td>${s.percents['결석']}%</td><td>${s.percents['지각']}%</td></tr>`).join('')}
+      </tbody></table>` : '<div class="muted">출석 기록이 있는 매장이 없습니다.</div>';
+    }).catch(() => { document.getElementById('storeStats').innerHTML = '<div class="muted">불러오기 실패</div>'; });
+  }
+
   const card = document.createElement('div'); card.className = 'card';
   card.innerHTML = `
     <div class="row mb8">
@@ -593,17 +610,22 @@ async function renderAssignments() {
       </div>
       <div class="row">
         <div class="field" style="flex:1"><label>마감일시</label><input id="aDeadline" type="datetime-local" /></div>
-        <div class="field" style="flex:1"><label>제출 방식</label><select id="aSubType"><option value="none">제출 없음(완료체크만)</option><option value="file">파일</option><option value="link">링크</option><option value="both">파일+링크 모두 허용</option></select></div>
+        <div class="field" style="flex:1"><label>제출 방식</label><select id="aSubType"><option value="none">제출 없음(완료체크만)</option><option value="file">파일</option><option value="link">링크</option><option value="both">파일+링크 모두 허용</option><option value="model_work">모델 작업(비포/애프터 누적)</option></select></div>
       </div>
+      <div class="field" id="targetCountField" style="display:none"><label>목표 인원수 (예: 진화 필수 - 모델 작업 100명)</label><input id="aTargetCount" type="number" value="100" /></div>
       <button class="btn primary" id="createAssign">등록</button>
     `;
     content.appendChild(createCard);
+    document.getElementById('aSubType').onchange = (e) => {
+      document.getElementById('targetCountField').style.display = e.target.value === 'model_work' ? 'block' : 'none';
+    };
     document.getElementById('createAssign').onclick = async () => {
       const body = {
         title: document.getElementById('aTitle').value, description: document.getElementById('aDesc').value,
         level: document.getElementById('aLevel').value || null, weekday: document.getElementById('aWeekday').value || null,
         deadline: document.getElementById('aDeadline').value, submissionType: document.getElementById('aSubType').value,
-        regionId: ttState.regionId || (REGIONS[0] && REGIONS[0].id)
+        targetCount: document.getElementById('aTargetCount').value,
+        regionId: null
       };
       if (!body.title || !body.deadline) return alert('제목과 마감일은 필수입니다.');
       await api('/assignments', { method: 'POST', body: JSON.stringify(body) });
@@ -621,6 +643,7 @@ async function renderAssignments() {
 
 function renderAssignmentRow(a) {
   const target = [a.level || '전체 레벨', a.weekday ? a.weekday + '요일' : '전체 요일'].join(' · ');
+  if (a.submissionType === 'model_work') return renderModelWorkAssignmentRow(a);
   let submitBox = '';
   if (ME.role === 'student') {
     if (a.mySubmission) {
@@ -643,6 +666,75 @@ function renderAssignmentRow(a) {
     <div class="mt8">${esc(a.description)}</div>
     ${submitBox}
   </div>`;
+}
+
+function renderModelWorkAssignmentRow(a) {
+  const target = [a.level || '전체 레벨', a.weekday ? a.weekday + '요일' : '전체 요일'].join(' · ');
+  const target_n = a.targetCount || 100;
+  let box = '';
+  if (ME.role === 'student') {
+    const count = a.myModelWorkCount || 0;
+    const pct = Math.min(100, Math.round((count / target_n) * 100));
+    box = `
+      <div class="mt8">
+        <div class="muted">진행률: ${count} / ${target_n}명 (${pct}%)</div>
+        <div class="field mt8"><label>비포 사진</label><input type="file" id="mwBefore_${a.id}" accept="image/*" /></div>
+        <div class="field"><label>애프터 사진</label><input type="file" id="mwAfter_${a.id}" accept="image/*" /></div>
+        <div class="field"><label>코멘트</label><input id="mwComment_${a.id}" /></div>
+        <button class="btn small primary" onclick="submitModelWork(${a.id})">모델 작업 등록</button>
+        <button class="btn small ghost" onclick="viewModelWorkLogs(${a.id})">내 등록 이력 보기</button>
+      </div>`;
+  } else if (canCreateAssignment()) {
+    box = `<div class="mt8"><span class="badge internal">전체 등록 ${a.modelWorkTotalCount || 0}건</span> <button class="btn small ghost" onclick="viewModelWorkLogs(${a.id})">전체 이력/피드백 보기</button></div>`;
+  }
+  return `<div class="card">
+    <b>${esc(a.title)}</b> <span class="badge internal">마감 ${esc((a.deadline||'').replace('T',' '))}</span> <span class="badge pending">모델 작업 · 목표 ${target_n}명</span>
+    <div class="muted mt8">${target}</div>
+    <div class="mt8">${esc(a.description)}</div>
+    ${box}
+    <div id="mwLogs_${a.id}" class="mt8"></div>
+  </div>`;
+}
+async function submitModelWork(assignmentId) {
+  const beforeEl = document.getElementById(`mwBefore_${assignmentId}`);
+  const afterEl = document.getElementById(`mwAfter_${assignmentId}`);
+  const comment = document.getElementById(`mwComment_${assignmentId}`).value;
+  if (!beforeEl.files[0] || !afterEl.files[0]) return alert('비포/애프터 사진을 모두 첨부하세요.');
+  const readPhoto = (fileEl) => new Promise((resolve) => {
+    const file = fileEl.files[0];
+    const reader = new FileReader();
+    reader.onload = () => resolve({ fileName: file.name, mimeType: file.type, data: reader.result.split(',')[1] });
+    reader.readAsDataURL(file);
+  });
+  const [beforePhoto, afterPhoto] = await Promise.all([readPhoto(beforeEl), readPhoto(afterEl)]);
+  const r = await api('/model-work/submit', { method: 'POST', body: JSON.stringify({ assignmentId, beforePhoto, afterPhoto, comment }) });
+  alert(`등록되었습니다. (${r.count} / ${r.target}명)`);
+  renderAssignments();
+}
+async function viewModelWorkLogs(assignmentId) {
+  const { logs } = await api(`/model-work?assignmentId=${assignmentId}`);
+  const canFb = canCreateAssignment();
+  document.getElementById(`mwLogs_${assignmentId}`).innerHTML = logs.length ? logs.map(l => `
+    <div class="card">
+      <b>${esc(l.studentName || '')}</b> · <span class="muted">${new Date(l.createdAt).toLocaleString()}</span>
+      <div class="row mt8">
+        ${l.beforePhotoUrl ? `<a href="${esc(l.beforePhotoUrl)}" target="_blank">비포 사진</a>` : '<span class="muted">비포 사진 없음</span>'}
+        ${l.afterPhotoUrl ? `<a href="${esc(l.afterPhotoUrl)}" target="_blank">애프터 사진</a>` : '<span class="muted">애프터 사진 없음</span>'}
+      </div>
+      ${l.comment ? `<div class="mt8">${esc(l.comment)}</div>` : ''}
+      <div class="mt8"><b>피드백</b></div>
+      ${(l.feedbacks||[]).map(f => `<div class="mt8">· ${esc(f.authorName)}: ${esc(f.comment)}</div>`).join('') || '<div class="muted mt8">아직 피드백 없음</div>'}
+      <div class="muted mt8">AI 피드백: 준비 중</div>
+      ${canFb ? `<div class="mt8 row"><input id="mwFbInput_${l.id}" placeholder="피드백 입력" style="flex:1" /><button class="btn small primary" onclick="submitModelWorkFeedback(${l.id}, ${assignmentId})">등록</button></div>` : ''}
+    </div>
+  `).join('') : '<div class="muted">등록된 모델 작업이 없습니다.</div>';
+}
+async function submitModelWorkFeedback(logId, assignmentId) {
+  const el = document.getElementById(`mwFbInput_${logId}`);
+  const comment = el.value.trim();
+  if (!comment) return;
+  await api(`/model-work/${logId}/feedback`, { method: 'POST', body: JSON.stringify({ comment }) });
+  viewModelWorkLogs(assignmentId);
 }
 
 async function submitAssignment(id, submissionType) {
@@ -686,16 +778,19 @@ async function renderPayments() {
     content.appendChild(duesCard);
     async function loadDues() {
       const month = document.getElementById('duesMonth').value || thisMonth;
-      const { dues } = await api(`/monthly-dues?month=${month}`);
-      document.getElementById('duesTable').innerHTML = dues.length ? `<table><thead><tr><th>이름</th><th>소속</th><th>레벨</th><th>입금예정일</th><th>금액</th><th>입금확인</th></tr></thead><tbody>
-        ${dues.map(d => `<tr>
+      const { dues, bankAccount } = await api(`/monthly-dues?month=${month}`);
+      const bankLine = bankAccount ? `<div class="muted mb8">입금 계좌: ${esc(bankAccount)}</div>` : '';
+      document.getElementById('duesTable').innerHTML = bankLine + (dues.length ? `<table><thead><tr><th>이름</th><th>소속</th><th>레벨</th><th>입금예정일</th><th>금액</th><th>입금확인</th></tr></thead><tbody>` : '');
+      if (!dues.length) { document.getElementById('duesTable').innerHTML += '<div class="muted">대상 수강생이 없습니다.</div>'; return; }
+      document.getElementById('duesTable').innerHTML = bankLine + `<table><thead><tr><th>이름</th><th>소속</th><th>레벨</th><th>입금예정일</th><th>금액</th><th>입금확인</th></tr></thead><tbody>`
+        + dues.map(d => `<tr>
           <td>${esc(d.studentName)}</td><td>${esc(d.regionName)}</td><td>${esc((d.levels||[]).join(','))}</td>
           <td><input type="date" id="due_date_${d.id}" value="${esc(d.dueDate||'')}" style="width:130px" /></td>
           <td><input type="number" id="due_amt_${d.id}" value="${d.amount ?? ''}" placeholder="금액 입력" style="width:100px" /></td>
           <td><label><input type="checkbox" id="due_paid_${d.id}" ${d.paid?'checked':''} /> ${d.paid ? `입금(${esc(d.paidDate||'')})` : '미입금'}</label>
           <button class="btn small ghost" onclick="saveDue(${d.id})">저장</button></td>
-        </tr>`).join('')}
-      </tbody></table>` : '<div class="muted">대상 수강생이 없습니다.</div>';
+        </tr>`).join('') + `</tbody></table>`;
+      return;
     }
     document.getElementById('loadDuesBtn').onclick = loadDues;
     loadDues();
@@ -935,15 +1030,14 @@ async function resetPw(id) {
 // ===================== 시간표 관리 (템플릿) =====================
 async function renderTimetableAdmin() {
   const content = document.getElementById('content');
-  content.innerHTML = `<div class="page-title">시간표 관리</div><div class="page-sub">기본틀 등록 → 매달 자동 생성</div>`;
+  content.innerHTML = `<div class="page-title">시간표 관리</div><div class="page-sub">시간표는 매장이 아니라 아카데미(수업 장소) 기준입니다. 여러 매장 수강생이 같은 아카데미에서 함께 수업을 듣습니다. 기본틀 등록 → 매달 자동 생성</div>`;
   const card = document.createElement('div'); card.className = 'card';
-  const regionOpts = REGIONS.map(r => `<option value="${r.id}">${esc(r.name)}</option>`).join('');
   const { staff } = await api('/staff');
   const instructorOpts = staff.map(s => `<option value="${s.id}">${esc(s.name)} (${ROLE_LABEL[s.role]})</option>`).join('');
   card.innerHTML = `
     <h3>기본틀 등록</h3>
     <div class="row">
-      <div class="field" style="flex:1"><label>지역</label><select id="tRegion">${regionOpts}</select></div>
+      <div class="field" style="flex:1"><label>아카데미(수업 장소, 필수)</label><select id="tAcademy">${ACADEMIES.length ? ACADEMIES.map(a=>`<option value="${a.id}">${esc(a.name)}</option>`).join('') : '<option value="">등록된 아카데미가 없습니다 - 먼저 아카데미 관리에서 추가하세요</option>'}</select></div>
       <div class="field" style="flex:1"><label>구분</label><select id="tInternal"><option value="false">아카데미 시간표</option><option value="true">내부일정</option></select></div>
     </div>
     <div class="row">
@@ -979,8 +1073,11 @@ async function renderTimetableAdmin() {
   document.getElementById('preset3').onclick = () => applyPreset('15:00', '18:00');
   document.getElementById('presetZoom').onclick = () => applyPreset('09:00', '10:00');
   document.getElementById('addTemplate').onclick = async () => {
+    const academyId = document.getElementById('tAcademy').value;
+    if (!academyId) return alert('아카데미를 먼저 등록/선택하세요 (아카데미 관리 메뉴).');
     const body = {
-      regionId: document.getElementById('tRegion').value, isInternal: document.getElementById('tInternal').value === 'true',
+      academyId,
+      isInternal: document.getElementById('tInternal').value === 'true',
       title: document.getElementById('tTitle').value, level: document.getElementById('tLevel').value || null,
       subject: document.getElementById('tSubject').value, instructorId: document.getElementById('tInstructor').value || null,
       weekday: document.getElementById('tWeekday').value, startTime: document.getElementById('tStart').value,
@@ -991,8 +1088,9 @@ async function renderTimetableAdmin() {
   };
   const { templates } = await api('/timetable/template');
   const staffById = Object.fromEntries(staff.map(s => [s.id, s.name]));
-  document.getElementById('templateList').innerHTML = templates.length ? `<table><thead><tr><th>구분</th><th>제목</th><th>과목</th><th>강사</th><th>요일</th><th>시간</th><th>룸</th><th></th></tr></thead><tbody>
-    ${templates.map(t => `<tr><td>${t.isInternal?'<span class="badge internal">내부</span>':'아카데미'}</td><td>${esc(t.title)}</td><td>${esc(t.subject||'-')}</td><td>${esc(staffById[t.instructorId]||'-')}</td><td>${t.weekday}</td><td>${esc(t.startTime)}-${esc(t.endTime)}</td><td>${esc(t.room||'')}</td><td><button class="btn small danger" onclick="deleteTemplate(${t.id})">삭제</button></td></tr>`).join('')}
+  const academyById = Object.fromEntries(ACADEMIES.map(a => [a.id, a.name]));
+  document.getElementById('templateList').innerHTML = templates.length ? `<table><thead><tr><th>구분</th><th>제목</th><th>과목</th><th>강사</th><th>아카데미</th><th>요일</th><th>시간</th><th>룸</th><th></th></tr></thead><tbody>
+    ${templates.map(t => `<tr><td>${t.isInternal?'<span class="badge internal">내부</span>':'아카데미'}</td><td>${esc(t.title)}</td><td>${esc(t.subject||'-')}</td><td>${esc(staffById[t.instructorId]||'-')}</td><td>${esc(academyById[t.academyId]||'-')}</td><td>${t.weekday}</td><td>${esc(t.startTime)}-${esc(t.endTime)}</td><td>${esc(t.room||'')}</td><td><button class="btn small danger" onclick="deleteTemplate(${t.id})">삭제</button></td></tr>`).join('')}
   </tbody></table>` : '<div class="muted">등록된 기본틀 없음</div>';
 }
 async function deleteTemplate(id) {
@@ -1003,7 +1101,7 @@ async function deleteTemplate(id) {
 // ===================== 매장 관리 =====================
 async function renderStores() {
   const content = document.getElementById('content');
-  content.innerHTML = `<div class="page-title">매장 관리</div><div class="page-sub">주소·GPS 좌표(출석 인증용)·입금예정일 등록/수정</div>`;
+  content.innerHTML = `<div class="page-title">매장 관리</div><div class="page-sub">매장 주소·입금예정일 등록/수정 (수업이 열리는 아카데미 GPS는 "아카데미 관리"에서 별도 설정)</div>`;
   const card = document.createElement('div'); card.className = 'card';
   card.innerHTML = `<div id="storeList">불러오는 중...</div>`;
   content.appendChild(card);
@@ -1011,14 +1109,12 @@ async function renderStores() {
   const grouped = areas.length ? areas : [''];
   card.querySelector('#storeList').innerHTML = grouped.map(area => `
     <h3 class="mt16">${esc(area || '기타')}</h3>
-    <table><thead><tr><th>매장명</th><th>리더</th><th>주소</th><th>위도</th><th>경도</th><th>입금예정일</th><th></th></tr></thead><tbody>
+    <table><thead><tr><th>매장명</th><th>리더</th><th>주소</th><th>입금예정일</th><th></th></tr></thead><tbody>
       ${REGIONS.filter(r => (r.area || '') === area).map(r => `
         <tr>
           <td>${esc(r.name)}</td>
           <td>${esc(r.leaderName || '-')}</td>
-          <td><input id="addr_${r.id}" value="${esc(r.address||'')}" style="width:160px" /></td>
-          <td><input id="lat_${r.id}" value="${r.lat ?? ''}" style="width:90px" placeholder="예: 37.5274" /></td>
-          <td><input id="lng_${r.id}" value="${r.lng ?? ''}" style="width:90px" placeholder="예: 127.0400" /></td>
+          <td><input id="addr_${r.id}" value="${esc(r.address||'')}" style="width:200px" /></td>
           <td><input id="due_${r.id}" type="number" value="${r.paymentDueDay ?? ''}" style="width:60px" placeholder="일" /></td>
           <td><button class="btn small primary" onclick="saveStore(${r.id})">저장</button></td>
         </tr>
@@ -1028,24 +1124,85 @@ async function renderStores() {
 }
 async function saveStore(id) {
   const address = document.getElementById(`addr_${id}`).value;
-  const lat = document.getElementById(`lat_${id}`).value;
-  const lng = document.getElementById(`lng_${id}`).value;
   const paymentDueDay = document.getElementById(`due_${id}`).value;
-  await api(`/regions/${id}`, { method: 'PUT', body: JSON.stringify({ address, lat, lng, paymentDueDay }) });
+  await api(`/regions/${id}`, { method: 'PUT', body: JSON.stringify({ address, paymentDueDay }) });
   const regionsRes = await api('/regions'); REGIONS = regionsRes.regions;
   alert('저장되었습니다.');
   renderStores();
 }
 
+// ===================== 아카데미 관리 (수업이 실제 진행되는 장소, 매장과 별개) =====================
+async function renderAcademies() {
+  const content = document.getElementById('content');
+  content.innerHTML = `<div class="page-title">아카데미 관리</div><div class="page-sub">수업이 실제로 진행되는 장소 - 출석 GPS 인증 기준. 매장(리더 소속)과는 별개입니다.</div>`;
+  const addCard = document.createElement('div'); addCard.className = 'card';
+  addCard.innerHTML = `
+    <h3>아카데미 추가</h3>
+    <div class="row">
+      <div class="field" style="flex:1"><label>이름</label><input id="newAcName" placeholder="예: 부산 아카데미" /></div>
+      <div class="field" style="flex:1"><label>주소</label><input id="newAcAddr" /></div>
+      <div class="field" style="flex:1"><label>위도</label><input id="newAcLat" placeholder="예: 37.5274" /></div>
+      <div class="field" style="flex:1"><label>경도</label><input id="newAcLng" placeholder="예: 127.0400" /></div>
+    </div>
+    <button class="btn primary small" id="addAcademyBtn">추가</button>
+  `;
+  content.appendChild(addCard);
+  document.getElementById('addAcademyBtn').onclick = async () => {
+    const name = document.getElementById('newAcName').value.trim();
+    if (!name) return alert('이름을 입력하세요.');
+    await api('/academies', { method: 'POST', body: JSON.stringify({
+      name, address: document.getElementById('newAcAddr').value,
+      lat: document.getElementById('newAcLat').value, lng: document.getElementById('newAcLng').value
+    }) });
+    const acRes = await api('/academies'); ACADEMIES = acRes.academies;
+    renderAcademies();
+  };
+
+  const listCard = document.createElement('div'); listCard.className = 'card';
+  listCard.innerHTML = `<h3>등록된 아카데미</h3>
+    <div class="muted mb8">GPS 좌표는 지도 검색으로 추정하지 않고, 실제 아카데미 현장에서 휴대폰으로 "현재 위치로 등록" 버튼을 눌러 정확하게 입력하는 것을 권장합니다.</div>
+    <table><thead><tr><th>이름</th><th>주소</th><th>위도</th><th>경도</th><th></th></tr></thead><tbody>
+    ${ACADEMIES.map(a => `<tr>
+      <td><input id="ac_name_${a.id}" value="${esc(a.name)}" style="width:120px" /></td>
+      <td><input id="ac_addr_${a.id}" value="${esc(a.address||'')}" style="width:160px" /></td>
+      <td><input id="ac_lat_${a.id}" value="${a.lat ?? ''}" style="width:90px" /></td>
+      <td><input id="ac_lng_${a.id}" value="${a.lng ?? ''}" style="width:90px" /></td>
+      <td>
+        <button class="btn small ghost" onclick="useCurrentLocation(${a.id})">📍 현재 위치로 등록</button>
+        <button class="btn small primary" onclick="saveAcademy(${a.id})">저장</button>
+      </td>
+    </tr>`).join('')}
+  </tbody></table>`;
+  content.appendChild(listCard);
+}
+function useCurrentLocation(id) {
+  if (!navigator.geolocation) return alert('이 브라우저는 위치 확인을 지원하지 않습니다.');
+  navigator.geolocation.getCurrentPosition((pos) => {
+    document.getElementById(`ac_lat_${id}`).value = pos.coords.latitude;
+    document.getElementById(`ac_lng_${id}`).value = pos.coords.longitude;
+    alert('현재 위치가 입력되었습니다. 확인 후 저장 버튼을 눌러주세요.');
+  }, () => alert('위치 권한을 허용해야 사용할 수 있습니다.'));
+}
+async function saveAcademy(id) {
+  const name = document.getElementById(`ac_name_${id}`).value;
+  const address = document.getElementById(`ac_addr_${id}`).value;
+  const lat = document.getElementById(`ac_lat_${id}`).value;
+  const lng = document.getElementById(`ac_lng_${id}`).value;
+  await api(`/academies/${id}`, { method: 'PUT', body: JSON.stringify({ name, address, lat, lng }) });
+  const acRes = await api('/academies'); ACADEMIES = acRes.academies;
+  alert('저장되었습니다.');
+  renderAcademies();
+}
+
 // ===================== 설정 (마스터 전용) =====================
 async function renderSettings() {
   const content = document.getElementById('content');
-  content.innerHTML = `<div class="page-title">설정</div><div class="page-sub">진화시험(3·6·9·12월) 응시 자격 출석률 기준</div>`;
+  content.innerHTML = `<div class="page-title">설정</div><div class="page-sub">진화시험 응시 자격 · 회비 기본금액 · 입금 계좌</div>`;
   const card = document.createElement('div'); card.className = 'card';
   const { value } = await api('/settings/exam_attendance_threshold');
   card.innerHTML = `
-    <h3>진화시험 응시 자격 - 최소 출석률(%)</h3>
-    <div class="muted mb8">값을 설정하지 않으면 수강생 개인 페이지에 경고가 표시되지 않습니다. 임의로 기본값을 넣지 않았으니 직접 입력해주세요.</div>
+    <h3>진화시험(3·6·9·12월) 응시 자격 - 최소 출석률(%)</h3>
+    <div class="muted mb8">보류 중인 항목입니다. 나중에 세부 체크리스트 기준이 정해지면 이 수치 기반 경고 대신 체크리스트 기능으로 확장할 예정입니다. 값을 설정하지 않으면 경고가 표시되지 않습니다.</div>
     <div class="row"><input id="thresholdInput" type="number" min="0" max="100" value="${value ?? ''}" style="width:100px" /><button class="btn primary small" id="saveThreshold">저장</button></div>
     <div id="thresholdMsg" class="mt8"></div>
   `;
@@ -1054,6 +1211,27 @@ async function renderSettings() {
     const v = document.getElementById('thresholdInput').value;
     await api('/settings/exam_attendance_threshold', { method: 'POST', body: JSON.stringify({ value: v === '' ? null : Number(v) }) });
     document.getElementById('thresholdMsg').innerHTML = '<div class="msg ok">저장되었습니다.</div>';
+  };
+
+  const tuitionCard = document.createElement('div'); tuitionCard.className = 'card';
+  const { value: amount } = await api('/settings/monthly_tuition_amount');
+  const { value: bankAcc } = await api('/settings/tuition_bank_account');
+  tuitionCard.innerHTML = `
+    <h3>월별 회비 기본금액 / 입금 계좌</h3>
+    <div class="field"><label>월 회비 기본금액(원)</label><input id="tuitionAmountInput" type="number" value="${amount ?? ''}" style="width:150px" /></div>
+    <div class="field"><label>입금 계좌 안내문구</label><input id="bankAccInput" value="${esc(bankAcc||'')}" style="width:100%" /></div>
+    <button class="btn primary small" id="saveTuition">저장</button>
+    <div id="tuitionMsg" class="mt8"></div>
+  `;
+  content.appendChild(tuitionCard);
+  document.getElementById('saveTuition').onclick = async () => {
+    const amt = document.getElementById('tuitionAmountInput').value;
+    const bank = document.getElementById('bankAccInput').value;
+    await Promise.all([
+      api('/settings/monthly_tuition_amount', { method: 'POST', body: JSON.stringify({ value: amt === '' ? null : Number(amt) }) }),
+      api('/settings/tuition_bank_account', { method: 'POST', body: JSON.stringify({ value: bank }) })
+    ]);
+    document.getElementById('tuitionMsg').innerHTML = '<div class="msg ok">저장되었습니다.</div>';
   };
 }
 

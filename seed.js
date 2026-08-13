@@ -56,6 +56,25 @@ function run() {
   });
   if (createdCount) console.log(`매장(지역) ${createdCount}개 등록됨 (주소/GPS좌표는 매장 관리 화면에서 입력 필요)`);
 
+  // 수업이 실제로 진행되는 "아카데미" 장소. 매장(리더가 일하는 헤어샵)과는 별개.
+  // 서울·수도권 1곳만 우선 등록하고, 다른 지역은 나중에 "아카데미 관리" 화면에서 추가한다.
+  // 정확한 주소/GPS좌표는 비워두고 직접 입력하도록 한다 (임의로 만들지 않음).
+  let academy = db.findOne('academies', a => a.name === '강남 아카데미');
+  if (!academy) {
+    academy = db.insert('academies', {
+      name: '강남 아카데미', address: '서울 강남구 압구정로 332 동도상가 지하 1층', lat: null, lng: null
+    });
+    console.log('아카데미 등록됨: 강남 아카데미 (GPS좌표는 아카데미 관리 화면의 "현재 위치로 등록" 버튼으로 현장에서 입력 필요)');
+  }
+
+  // 교육비: 정상가 100만원, 식구가 50만원 / 매월 10일 납부 (지원님이 알려준 값을 그대로 사용, 임의로 만들지 않음)
+  if (!db.findOne('app_settings', s => s.key === 'monthly_tuition_amount')) {
+    db.insert('app_settings', { key: 'monthly_tuition_amount', value: 500000 });
+  }
+  if (!db.findOne('app_settings', s => s.key === 'tuition_bank_account')) {
+    db.insert('app_settings', { key: 'tuition_bank_account', value: '한국이타리더단강남협동조합 / KB국민은행 464801-01-220114' });
+  }
+
   console.log('\nSeed complete.');
 }
 

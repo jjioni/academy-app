@@ -27,7 +27,20 @@
         <label style="display:flex; align-items:center; gap:4px;"><input type="checkbox" id="autoLoginChk" checked /> 자동 로그인</label>
       </div>
       <button class="btn primary block" type="submit">로그인</button>
+      <div class="mt8" style="text-align:center"><a href="#" id="forgotPwLink" style="font-size:12px; text-decoration:underline;">비밀번호를 잊으셨나요?</a></div>
     </form>
+
+    <div id="forgotPwBox" style="display:none">
+      <div class="field"><label>아이디(휴대폰번호)</label><input id="fpPhone" /></div>
+      <button class="btn ghost block" id="fpLoadQuestionBtn">다음</button>
+      <div id="fpStep2" style="display:none" class="mt16">
+        <div class="field"><label id="fpQuestionLabel"></label><input id="fpAnswer" placeholder="답변 입력" /></div>
+        <div class="field"><label>새 비밀번호</label><input id="fpNewPw" type="password" /></div>
+        <button class="btn primary block" id="fpResetBtn">비밀번호 재설정</button>
+      </div>
+      <div id="fpMsg" class="mt8"></div>
+      <button class="btn ghost block mt8" id="fpBackBtn">로그인으로 돌아가기</button>
+    </div>
 
     <form id="signupForm" style="display:none">
       <div class="field">
@@ -46,6 +59,18 @@
         <div class="field" style="flex:1"><label>휴대폰번호 (로그인 아이디로 사용됩니다)</label><input name="phone" placeholder="01012345678" required /></div>
         <div class="field" style="flex:1"><label>비밀번호</label><input name="password" type="password" required /></div>
       </div>
+      <div class="row">
+        <div class="field" style="flex:1"><label>비밀번호 찾기용 질문</label>
+          <select name="securityQuestion">
+            <option value="가장 친한 친구 이름은?">가장 친한 친구 이름은?</option>
+            <option value="태어난 도시는?">태어난 도시는?</option>
+            <option value="첫 반려동물 이름은?">첫 반려동물 이름은?</option>
+            <option value="가장 좋아하는 음식은?">가장 좋아하는 음식은?</option>
+            <option value="졸업한 초등학교 이름은?">졸업한 초등학교 이름은?</option>
+          </select>
+        </div>
+        <div class="field" style="flex:1"><label>답변</label><input name="securityAnswer" placeholder="비밀번호를 잊었을 때 본인 확인용" required /></div>
+      </div>
       <div class="field"><label>내국인 / 외국인</label>
         <select name="nationality" id="signupNationality">
           <option value="내국인">내국인</option>
@@ -54,6 +79,7 @@
       </div>
       <div class="field"><label>소속(매장)</label><select name="regionId" id="signupRegion"></select></div>
       <div class="field muted" id="leaderDisplay" style="font-size:13px"></div>
+      <div class="field" id="leaderAddressField" style="display:none"><label>매장 주소</label><input name="storeAddress" placeholder="매장 정확한 주소를 입력해주세요" /></div>
 
       <div id="studentFields">
         <div class="field"><label>수강 희망 레벨 (복수 선택 가능)</label>
@@ -134,6 +160,7 @@ function refreshRoleFields() {
   const role = document.getElementById('signupRole').value;
   document.getElementById('studentFields').style.display = role === 'student' ? 'block' : 'none';
   document.getElementById('staffFields').style.display = (role === 'instructor' || role === 'admin') ? 'block' : 'none';
+  document.getElementById('leaderAddressField').style.display = role === 'admin' ? 'block' : 'none';
   refreshTuitionCheck();
 }
 document.getElementById('signupRole').onchange = refreshRoleFields;
@@ -164,6 +191,43 @@ document.getElementById('loginForm').onsubmit = async (e) => {
   if (saveId) localStorage.setItem('savedPhone', payload.phone);
   else localStorage.removeItem('savedPhone');
   location.href = '/dashboard.html';
+};
+
+// 비밀번호 재설정 (가입 시 설정한 보안질문/답변으로 본인확인 - 이메일/SMS 없이 비용 없이 처리)
+document.getElementById('forgotPwLink').onclick = (e) => {
+  e.preventDefault();
+  document.getElementById('loginForm').style.display = 'none';
+  document.getElementById('forgotPwBox').style.display = 'block';
+  msgBox.innerHTML = '';
+};
+document.getElementById('fpBackBtn').onclick = () => {
+  document.getElementById('forgotPwBox').style.display = 'none';
+  document.getElementById('fpStep2').style.display = 'none';
+  document.getElementById('loginForm').style.display = 'block';
+  document.getElementById('fpMsg').innerHTML = '';
+};
+document.getElementById('fpLoadQuestionBtn').onclick = async () => {
+  const phone = document.getElementById('fpPhone').value.trim();
+  if (!phone) return;
+  const res = await fetch('/api/password-reset/question?phone=' + encodeURIComponent(phone));
+  const data = await res.json();
+  const msg = document.getElementById('fpMsg');
+  if (!res.ok || !data.question) { msg.innerHTML = '<div class="msg error">등록된 보안질문이 없습니다. 리더/관리자에게 초기화를 요청하세요.</div>'; return; }
+  document.getElementById('fpQuestionLabel').textContent = data.question;
+  document.getElementById('fpStep2').style.display = 'block';
+  msg.innerHTML = '';
+};
+document.getElementById('fpResetBtn').onclick = async () => {
+  const phone = document.getElementById('fpPhone').value.trim();
+  const answer = document.getElementById('fpAnswer').value.trim();
+  const newPassword = document.getElementById('fpNewPw').value;
+  const msg = document.getElementById('fpMsg');
+  if (!answer || !newPassword) { msg.innerHTML = '<div class="msg error">답변과 새 비밀번호를 입력하세요.</div>'; return; }
+  const res = await fetch('/api/password-reset/confirm', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ phone, answer, newPassword }) });
+  const data = await res.json();
+  if (!res.ok) { msg.innerHTML = `<div class="msg error">${data.error || '재설정 실패'}</div>`; return; }
+  msg.innerHTML = '<div class="msg ok">비밀번호가 변경되었습니다. 로그인해주세요.</div>';
+  setTimeout(() => document.getElementById('fpBackBtn').click(), 1200);
 };
 
 // 아이디 저장 기능: 저장된 아이디가 있으면 로그인 폼에 자동으로 채워준다
@@ -208,6 +272,8 @@ document.getElementById('signupForm').onsubmit = async (e) => {
       career: fd.career, firstWorkDate: fd.firstWorkDate, mbti: fd.mbti, disc: fd.disc, debutMonth: fd.debutMonth,
       tuitionDateConfirmed: !!document.querySelector('[name=tuitionDateConfirmed]').checked,
       extra: (fd.role === 'instructor' || fd.role === 'admin') ? JSON.stringify({ phone2: fd.phone2 }) : '',
+      storeAddress: fd.role === 'admin' ? fd.storeAddress : '',
+      securityQuestion: fd.securityQuestion, securityAnswer: fd.securityAnswer,
       idCardPhoto, bankbookPhoto
     };
     const res = await fetch('/api/signup', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
