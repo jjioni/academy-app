@@ -9,7 +9,7 @@
 <body>
 <div class="app-shell">
   <div class="sidebar">
-    <div class="brand">아카데미</div>
+    <a href="#timetable" class="brand" style="display:block;cursor:pointer">🏠 아카데미</a>
     <div class="role-badge" id="roleBadge">-</div>
     <nav id="nav"></nav>
     <div class="logout"><button class="btn ghost block" id="logoutBtn">로그아웃</button></div>
@@ -68,6 +68,7 @@ function canCreateAssignment() { return ['master','region_rep','admin','instruct
 function canCheckAttendance() { return ['master','region_rep','admin','instructor'].includes(ME.role); }
 
 const TABS = [
+  { key: 'home', label: '🏠 홈' },
   { key: 'timetable', label: '시간표' },
   { key: 'attendance', label: '출석' },
   { key: 'stats', label: '출석 통계', show: () => ME.role !== 'student' },
@@ -103,7 +104,7 @@ function route() {
   const key = (location.hash || '#timetable').slice(1);
   renderNav(key);
   const map = {
-    timetable: renderTimetable, attendance: renderAttendance, stats: renderStats,
+    home: renderTimetable, timetable: renderTimetable, attendance: renderAttendance, stats: renderStats,
     feedback: renderFeedback, assignments: renderAssignments, payments: renderPayments,
     approvals: renderApprovals, 'timetable-admin': renderTimetableAdmin, account: renderAccount
   };

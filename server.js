@@ -17,8 +17,25 @@ const ROLE_LEVEL = { master: 4, region_rep: 3, admin: 2, instructor: 1, student:
 const CHECKIN_RADIUS_M = 50;
 const CHECKIN_CODE_TTL_MS = 60 * 1000;
 
-// ---------- in-memory sessions ----------
-const sessions = new Map(); // token -> userId
+// ---------- sessions (persisted to disk so "로그인 유지" survives server restarts —
+// an in-memory Map would forget everyone every time the process restarts, which
+// happens often on Render's free tier after idle spin-down) ----------
+const SESSION_TTL_MS = 14 * 24 * 60 * 60 * 1000; // 14 days, matches the cookie Max-Age
+
+function createSession(userId) {
+  const token = randomToken();
+  db.insert('sessions', { token, userId, createdAt: new Date().toISOString(), expiresAt: Date.now() + SESSION_TTL_MS });
+  return token;
+}
+function destroySession(token) {
+  const row = db.findOne('sessions', s => s.token === token);
+  if (row) db.remove('sessions', row.id);
+}
+function touchSession(row) {
+  // sliding expiry: every lookup pushes the session another 14 days out, so an
+  // actively-used login never gets logged out from under someone
+  db.update('sessions', row.id, { expiresAt: Date.now() + SESSION_TTL_MS });
+}
 
 function isAtLeast(user, role) {
   if (!user) return false;
@@ -114,9 +131,12 @@ function sendJSON(res, status, obj) {
 function getCurrentUser(req) {
   const cookies = parseCookies(req);
   const token = cookies.sid;
-  if (!token || !sessions.has(token)) return null;
-  const userId = sessions.get(token);
-  return db.getById('users', userId);
+  if (!token) return null;
+  const row = db.findOne('sessions', s => s.token === token);
+  if (!row) return null;
+  if (row.expiresAt < Date.now()) { db.remove('sessions', row.id); return null; }
+  touchSession(row);
+  return db.getById('users', row.userId);
 }
 
 // ---------- static file serving ----------
@@ -199,9 +219,8 @@ async function handleLogin(body, res) {
   if (!user || !verifyPassword(password, user.passwordHash)) return { status: 401, body: { error: '휴대폰번호 또는 비밀번호가 올바르지 않습니다.' } };
   if (user.status === 'pending') return { status: 403, body: { error: '아직 승인 대기 중입니다. 관리자 승인 후 로그인할 수 있습니다.' } };
   if (user.status === 'inactive') return { status: 403, body: { error: '비활성화된 계정입니다.' } };
-  const token = randomToken();
-  sessions.set(token, user.id);
-  res.setHeader('Set-Cookie', `sid=${token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${60 * 60 * 24 * 14}`);
+  const token = createSession(user.id);
+  res.setHeader('Set-Cookie', `sid=${token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${SESSION_TTL_MS / 1000}`);
   return { status: 200, body: { user: safeUser(user) } };
 }
 
@@ -238,7 +257,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (pathname === '/api/logout' && req.method === 'POST') {
       const cookies = parseCookies(req);
-      if (cookies.sid) sessions.delete(cookies.sid);
+      if (cookies.sid) destroySession(cookies.sid);
       res.setHeader('Set-Cookie', 'sid=; HttpOnly; Path=/; Max-Age=0');
       return sendJSON(res, 200, { ok: true });
     }

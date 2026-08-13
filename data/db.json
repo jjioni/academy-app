@@ -4,55 +4,33 @@
       "id": 1,
       "role": "master",
       "phone": "happynian",
-      "passwordHash": "db442ec6911f3e6932d10d06b1f9c5a4:acc8896f9553fdc66433c7c5613e93ca402bc3e746afd66fd88d2e129dc24f1f0649de3e08887b52b9ec88c493bec075bc819cf9239c5058728dd9fc54377035",
+      "passwordHash": "6fd1f12ff69a2eeacd04ce5820e944a0:055b5f35d9a14d59da6f90ec9c40dceda75a8fef967e2cf73018e6a3e327e23e241abac69f488d272f4ab939728c3803abc8fc47da8fc8a23adb0f9ef328650e",
       "name": "마스터",
       "regionId": null,
       "status": "active",
-      "createdAt": "2026-08-13T03:37:26.454Z",
+      "createdAt": "2026-08-13T03:52:13.090Z",
       "profile": {}
     },
     {
       "id": 2,
       "role": "region_rep",
       "phone": "01011111111",
-      "passwordHash": "bdc0bdf9a5257bff223f5fb98b42a3c8:d1b2b751f218cd872171bfca018d8ac1a0fbf5e47a2676db4d499bccdf4c1aa2eeee37006013320bfb2c5a160ab363341aa14e0dba00131828d9c38c020d5752",
+      "passwordHash": "bf7492c04a64d02190f34e9aa3d22632:53ccd830d952690099b31f17e10be863729ddd4f8356f66f0314c8b5070c353ab5f85edf5b3873565f66fc94e8f289726ed227ec1ed10f72d4d7205cef98d393",
       "name": "압구정 지역대표",
       "regionId": 1,
       "status": "active",
-      "createdAt": "2026-08-13T03:37:26.478Z",
+      "createdAt": "2026-08-13T03:52:13.116Z",
       "profile": {}
     },
     {
       "id": 3,
       "role": "admin",
       "phone": "01022222222",
-      "passwordHash": "41be3cad34d542f1dfcef2c09e1b98b6:94bb884ad1820fd1632828f4f8dd8188d1afcf0f6f04bee639e317da1f7627a76706847f9c578a9fa393de72ee6072b46a195afa079351000fa5b37f926a20d9",
+      "passwordHash": "405bee74cac8b2402c29d53b84b190e6:bcedd8d582db4eb868314ec912ecef026adb1ed7544642c5ccf490eb9009cb140c2f980d89d059ee4463be58a56de2f095ad3f49f8d96fb294850315b2a76b5f",
       "name": "압구정 관리자",
       "regionId": 1,
       "status": "active",
-      "createdAt": "2026-08-13T03:37:26.501Z",
-      "profile": {}
-    },
-    {
-      "id": 4,
-      "role": "instructor",
-      "phone": "01033330001",
-      "passwordHash": "bfca6fd156113f0ef07d31558e20be63:48d5c7b92877241e4928b17045af4a7ed128c2ee189baee27a95066719130bc8e75c230828081b9b3f50c5a80b27846865ab1589f08f4eb3d8b516b37c49e699",
-      "name": "이도",
-      "regionId": 1,
-      "status": "active",
-      "createdAt": "2026-08-13T03:37:26.525Z",
-      "profile": {}
-    },
-    {
-      "id": 5,
-      "role": "instructor",
-      "phone": "01033330002",
-      "passwordHash": "e3027e8dac8ebfd64e5292ece1c50cb1:74233e69498e44fb5a45b3e45186cc281a05c4c7421ab32486bf853fd2bd49cc6b6c2399b81c4af0c112c5d18fc1092634d88eb33f58f204e581a280c8a60d6f",
-      "name": "건",
-      "regionId": 1,
-      "status": "active",
-      "createdAt": "2026-08-13T03:37:26.548Z",
+      "createdAt": "2026-08-13T03:52:13.142Z",
       "profile": {}
     }
   ],
@@ -72,12 +50,12 @@
       "weekday": "월",
       "startTime": "10:00",
       "endTime": "18:00",
-      "room": "A",
+      "room": "",
       "regionId": 1,
       "isInternal": false,
-      "title": "1레벨 (비기너)",
-      "subject": "펌 이론",
-      "instructorId": 4
+      "title": "1레벨",
+      "subject": "",
+      "instructorId": null
     },
     {
       "id": 2,
@@ -85,12 +63,12 @@
       "weekday": "월",
       "startTime": "10:00",
       "endTime": "18:00",
-      "room": "B",
+      "room": "",
       "regionId": 1,
       "isInternal": false,
-      "title": "3레벨 (챌린저)",
-      "subject": "커트 실습",
-      "instructorId": 5
+      "title": "3레벨",
+      "subject": "",
+      "instructorId": null
     },
     {
       "id": 3,
@@ -98,12 +76,12 @@
       "weekday": "화",
       "startTime": "10:00",
       "endTime": "18:00",
-      "room": "A",
+      "room": "",
       "regionId": 1,
       "isInternal": false,
-      "title": "2레벨 (러너)",
-      "subject": "컬러 이론",
-      "instructorId": 4
+      "title": "2레벨",
+      "subject": "",
+      "instructorId": null
     },
     {
       "id": 4,
@@ -111,12 +89,12 @@
       "weekday": "화",
       "startTime": "10:00",
       "endTime": "18:00",
-      "room": "B",
+      "room": "",
       "regionId": 1,
       "isInternal": false,
-      "title": "4레벨 (워너)",
-      "subject": "스타일링",
-      "instructorId": 5
+      "title": "4레벨",
+      "subject": "",
+      "instructorId": null
     },
     {
       "id": 5,
@@ -124,12 +102,12 @@
       "weekday": "화",
       "startTime": "10:00",
       "endTime": "18:00",
-      "room": "C",
+      "room": "",
       "regionId": 1,
       "isInternal": false,
       "title": "강사코스-이나모리반",
-      "subject": "강사 양성",
-      "instructorId": 4
+      "subject": "",
+      "instructorId": null
     },
     {
       "id": 6,
@@ -137,12 +115,12 @@
       "weekday": "수",
       "startTime": "10:00",
       "endTime": "18:00",
-      "room": "A",
+      "room": "",
       "regionId": 1,
       "isInternal": false,
-      "title": "1레벨 (비기너)",
-      "subject": "펌 실습",
-      "instructorId": 4
+      "title": "1레벨",
+      "subject": "",
+      "instructorId": null
     },
     {
       "id": 7,
@@ -150,12 +128,12 @@
       "weekday": "수",
       "startTime": "10:00",
       "endTime": "18:00",
-      "room": "B",
+      "room": "",
       "regionId": 1,
       "isInternal": false,
-      "title": "3레벨 (챌린저)",
-      "subject": "커트 이론",
-      "instructorId": 5
+      "title": "3레벨",
+      "subject": "",
+      "instructorId": null
     },
     {
       "id": 8,
@@ -163,12 +141,12 @@
       "weekday": "수",
       "startTime": "10:00",
       "endTime": "18:00",
-      "room": "C",
+      "room": "",
       "regionId": 1,
       "isInternal": false,
       "title": "강사코스-머스크반",
-      "subject": "강사 양성",
-      "instructorId": 5
+      "subject": "",
+      "instructorId": null
     },
     {
       "id": 9,
@@ -176,12 +154,12 @@
       "weekday": "목",
       "startTime": "10:00",
       "endTime": "18:00",
-      "room": "A",
+      "room": "",
       "regionId": 1,
       "isInternal": false,
-      "title": "2레벨 (러너)",
-      "subject": "컬러 실습",
-      "instructorId": 4
+      "title": "2레벨",
+      "subject": "",
+      "instructorId": null
     },
     {
       "id": 10,
@@ -189,12 +167,12 @@
       "weekday": "목",
       "startTime": "10:00",
       "endTime": "18:00",
-      "room": "B",
+      "room": "",
       "regionId": 1,
       "isInternal": false,
-      "title": "4레벨 (워너)",
-      "subject": "스타일링 실습",
-      "instructorId": 5
+      "title": "4레벨",
+      "subject": "",
+      "instructorId": null
     },
     {
       "id": 11,
@@ -233,8 +211,9 @@
   "payments": [],
   "refunds": [],
   "notifications": [],
+  "sessions": [],
   "_seq": {
-    "users": 5,
+    "users": 3,
     "regions": 1,
     "timetable_templates": 12,
     "timetable_instances": 0,
@@ -246,6 +225,7 @@
     "assignment_submissions": 0,
     "payments": 0,
     "refunds": 0,
-    "notifications": 0
+    "notifications": 0,
+    "sessions": 0
   }
 }
